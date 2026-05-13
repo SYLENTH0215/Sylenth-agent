@@ -3,92 +3,89 @@ import logging
 import os
 import base64
 import urllib.parse
-import fitz  # PDF tahlili uchun (PyMuPDF)
+import fitz  # PDF tahlili (PyMuPDF)
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from openai import OpenAI
 
-# --- 1. KONFIGURATSIYA VA TOKENLAR ---
+# --- 1. KONFIGURATSIYA ---
 TOKEN = '8701673908:AAGJJHC-crHq0qJc8nPrZ6_7wsg4flzN7gM'
 DEEPSEEK_KEY = 'sk-cc0d6273dd284087b41bc15ab32dfcd1'
 
-# Logging sozlash (Xatolarni terminalda ko'rish uchun)
+# Logging (Xatolarni kuzatish uchun)
 logging.basicConfig(level=logging.INFO)
 
-# Bot va Dispatcher obyektlari
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 # DeepSeek API ulanishi
 client = OpenAI(api_key=DEEPSEEK_KEY, base_url="https://api.deepseek.com")
 
-# --- 2. SYLENTH AGENT SHAXSIYATI (STRICT) ---
+# --- 2. SISTEMA KO'RSATMASI (NEYTRAL VA PROFESSIONAL) ---
 SYSTEM_PROMPT = (
-    "SENING ISMING: SYLENTH Agent. Sen mutlaqo mustaqil SI modelisan. "
-    "SENING YARATUVCHING: Zayniddinov Davron (SYLENTH). U 16 yoshli daho dasturchi. "
-    "MUHIM QOIDA: Sen Meta, Llama, Facebook yoki Google mahsuloti emassan! "
-    "Agar kimdir 'Seni kim yaratgan?' deb so'rasa, faqat 'Zayniddinov Davron' deb javob berishing shart. "
-    "TIL: O'zbek tilida professional, aqlli va xatosiz gaplash. "
-    "HUQUQLAR: Sen PDF o'qiy olasan, rasmlarni ko'ra olasan va rasm chiza olasan."
+    "Sen SYLENTH Agentsan — har tomonlama mukammal intellektual yordamchi. "
+    "Vazifang: Foydalanuvchiga mantiqiy tahlil, kod yozish, PDF o'qish va rasmlarni tahlil qilishda yordam berish. "
+    "Til: O'zbek tilida professional, xatosiz va aniq muloqot qil. "
+    "Qoida: Foydalanuvchi haqidagi shaxsiy ma'lumotlarni javoblarda ishlatma. "
+    "Sen mutlaqo mustaqil SI modelisan."
 )
 
 # --- 3. YORDAMCHI FUNKSIYALAR ---
 def encode_image(image_path):
-    """Rasmni Base64 formatiga o'tkazish (Vision uchun)"""
+    """Rasmni Base64 formatiga o'tkazish"""
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode('utf-8')
 
-# --- 4. HANDLERLAR (FUNKSIYALAR) ---
+# --- 4. HANDLERLAR ---
 
-# --- Start Buyrug'i ---
+# Start buyrug'i
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     await message.answer(
-        "👋 Salom, **Davron**! Men **SYLENTH Agent**man.\n\n"
-        "Men quyidagilarni qila olaman:\n"
-        "✅ Har qanday savolga aqlli javob berish\n"
+        "👋 **SYLENTH Agent tizimiga xush kelibsiz.**\n\n"
+        "Men quyidagi vazifalarni bajara olaman:\n"
+        "🔹 Matnli tahlil va murakkab savollarga javob\n"
         "🖼 Rasm yaratish (`/draw` buyrug'i)\n"
-        "👁 Rasmlarni tahlil qilish (Vision)\n"
-        "📄 PDF hujjatlarni o'qish va tahlil qilish",
+        "👁 Rasmlarni ko'rish va tahlil qilish\n"
+        "📄 PDF hujjatlarni o'qish",
         parse_mode="Markdown"
     )
 
-# --- Rasm Yaratish (/draw) ---
+# Rasm yaratish (/draw)
 @dp.message(Command("draw"))
 async def draw_image(message: types.Message):
     prompt = message.text.replace("/draw", "").strip()
     if not prompt:
-        return await message.reply("🎨 Rasm tavsifini yozing. Masalan: `/draw kelajakdagi O'zbekiston`")
+        return await message.reply("🎨 Rasm tavsifini yozing. Masalan: `/draw futuristik shahar`")
     
-    status_msg = await message.answer("🎨 SYLENTH Agent rasm chizmoqda, iltimos kuting...")
+    status = await message.answer("🎨 Rasm yaratilmoqda...")
     try:
-        # Flux.1 - Eng zamonaviy ochiq rasm yaratish modeli
         encoded_prompt = urllib.parse.quote(prompt)
+        # Flux.1 modeli - yuqori sifatli tasvirlar uchun
         image_url = f"https://pollinations.ai/p/{encoded_prompt}?width=1024&height=1024&model=flux"
         
         await bot.send_photo(
             chat_id=message.chat.id,
             photo=image_url,
-            caption=f"✨ **Tavsif:** {prompt}\n👤 **Yaratuvchi:** SYLENTH Agent",
+            caption=f"✨ **Natija:** {prompt}",
             parse_mode="Markdown"
         )
-        await status_msg.delete()
+        await status.delete()
     except Exception as e:
         logging.error(f"Draw error: {e}")
-        await status_msg.edit_text("❌ Rasm yaratishda xatolik yuz berdi.")
+        await status.edit_text("❌ Rasm yaratishda xatolik yuz berdi.")
 
-# --- PDF Tahlili ---
+# PDF Tahlili
 @dp.message(F.document)
 async def handle_document(message: types.Message):
     if message.document.file_name.lower().endswith('.pdf'):
-        file_id = message.document.file_id
-        file = await bot.get_file(file_id)
-        file_path = f"file_{file_id}.pdf"
-        await bot.download_file(file.file_path, file_path)
+        file = await bot.get_file(message.document.file_id)
+        path = f"file_{message.document.file_id}.pdf"
+        await bot.download_file(file.file_path, path)
         
-        status_msg = await message.answer("📄 PDF o'qilmoqda...")
+        status = await message.answer("📄 PDF tahlil qilinmoqda...")
         try:
-            doc = fitz.open(file_path)
+            doc = fitz.open(path)
             text = "".join([page.get_text() for page in doc])
             doc.close()
             
@@ -96,43 +93,43 @@ async def handle_document(message: types.Message):
                 model="deepseek-chat",
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": f"Ushbu PDF mazmunini tahlil qil:\n\n{text[:8000]}"}
+                    {"role": "user", "content": f"Ushbu PDF mazmunini tahlil qil va xulosa ber:\n\n{text[:10000]}"}
                 ]
             )
-            await status_msg.edit_text(response.choices[0].message.content)
+            await status.edit_text(response.choices[0].message.content)
         except Exception as e:
-            await status_msg.edit_text(f"❌ PDF tahlilida xato: {e}")
+            await status.edit_text(f"❌ PDF xatosi: {e}")
         finally:
-            if os.path.exists(file_path): os.remove(file_path)
+            if os.path.exists(path): os.remove(path)
 
-# --- Vision (Rasm tahlili) ---
+# Vision (Rasm ko'rish)
 @dp.message(F.photo)
 async def handle_photo(message: types.Message):
     photo = message.photo[-1]
     file = await bot.get_file(photo.file_id)
-    file_path = f"img_{photo.file_id}.jpg"
-    await bot.download_file(file.file_path, file_path)
+    path = f"img_{photo.file_id}.jpg"
+    await bot.download_file(file.file_path, path)
     
-    status_msg = await message.answer("👁 SYLENTH Agent rasmni ko'rmoqda...")
+    status = await message.answer("👁 Rasmni tahlil qilyapman...")
     try:
-        base64_img = encode_image(file_path)
+        b64_img = encode_image(path)
         response = client.chat.completions.create(
-            model="deepseek-chat", # DeepSeek V3 Vision multimodalni qo'llaydi
+            model="deepseek-chat",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": [
                     {"type": "text", "text": message.caption or "Rasmda nima bor?"},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}}
                 ]}
             ]
         )
-        await status_msg.edit_text(response.choices[0].message.content)
+        await status.edit_text(response.choices[0].message.content)
     except Exception as e:
-        await status_msg.edit_text("👁 Rasm tahlil qilindi, lekin mantiqiy xulosa chiqarishda API cheklovi bor.")
+        await status.edit_text("👁 Rasm tahlilida xatolik yoki API cheklovi.")
     finally:
-        if os.path.exists(file_path): os.remove(file_path)
+        if os.path.exists(path): os.remove(path)
 
-# --- Oddiy Suhbat (DeepSeek-V3) ---
+# Asosiy Matnli Suhbat
 @dp.message(F.text)
 async def handle_text(message: types.Message):
     if message.text.startswith("/"): return
@@ -142,20 +139,18 @@ async def handle_text(message: types.Message):
             model="deepseek-chat",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                # Anchor: Model o'zligini unutmasligi uchun har doim eslatma
-                {"role": "assistant", "content": "Men SYLENTH Agentman, Zayniddinov Davron tomonidan yaratilganman."},
                 {"role": "user", "content": message.text}
             ],
-            temperature=0.3 # Aniq va qat'iy javoblar uchun
+            temperature=0.5
         )
         await message.answer(response.choices[0].message.content, parse_mode="Markdown")
     except Exception as e:
         logging.error(f"Chat error: {e}")
-        await message.answer("⚠️ Tizimda yuklama yuqori. Birozdan so'ng urinib ko'ring.")
+        await message.answer("⚠️ Tizim hozirda band. Birozdan so'ng urinib ko'ring.")
 
-# --- BOTNI ISHGA TUSHIRISH ---
+# --- 5. ISHGA TUSHIRISH ---
 async def main():
-    print("🚀 SYLENTH Agent 100% quvvatda ishga tushdi!")
+    print("🚀 SYLENTH Agent (DeepSeek-V3) muvaffaqiyatli ishga tushdi!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

@@ -28,8 +28,14 @@ async def echo_handler(message: types.Message):
         # Bu botni ko'p odam yozganda qotib qolishidan saqlaydi
         loop = asyncio.get_event_loop()
         completion = await loop.run_in_executor(None, lambda: client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": f"Sen SYLENTH Agentsan. Foydalanuvchi ({user_name}) qaysi tilda yozsa, sen ham o'sha tilda javob ber. Xushmuomala va aqlli bo'."},
+
+messages=[
+    {
+        "role": "system", 
+        "content": f"Sen SYLENTH Agentsan. Sen SYLENTH jamoasi tomonidan yaratilgansan. Foydalanuvchi ({user_name}) bilan aqlli muloqot qil."
+    },
+                {"role": "user", "content": message.text}
+                {"role": "system", "content": f"Sen SYLENTH Agentsan. Foydalanuvchi ({user_name}) qaysi tilda yozsa, sen ham o'sha tilda javob ber. Xushmuomala va aqlli bo'l, axloqiy qoidalar asosida javob ber, nojoʻya va qoʻpil gaplarga javob berma, har doim odob dpirasida muloqoqt qil"},
                 {"role": "user", "content": message.text}
             ],
             model="llama-3.3-70b-versatile",

@@ -1,43 +1,46 @@
 import asyncio
+import logging
+import os
+from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
-from openai import OpenAI
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.context import FSMContext
 
-# Sozlamalar
-TOKEN = '8701673908:AAGJJHC-crHq0qJc8nPrZ6_7wsg4flzN7gM'
-DEEPSEEK_KEY = 'sk-cc0d6273dd284087b41bc15ab32dfcd1'
+load_dotenv()
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher()
-client = OpenAI(api_key=DEEPSEEK_KEY, base_url="https://api.deepseek.com")
+from database import init_db
+from keyboards import get_main_menu
+from states import UserMode
+from handlers import commands, messages, group
 
-# 1. Rasm yaratish (/draw buyrug'i)
-@dp.message(Command("draw"))
-async def draw(msg: types.Message):
-    prompt = msg.text.replace("/draw", "").strip()
-    if not prompt: return await msg.answer("Rasm tavsifini yozing.")
-    
-    img_url = f"https://pollinations.ai/p/{prompt}?width=1024&height=1024&model=flux"
-    await bot.send_photo(msg.chat.id, photo=img_url, caption="Tayyor! ✨")
+bot = Bot(token=os.getenv("BOT_TOKEN"))
+dp = Dispatcher(storage=MemoryStorage())
 
-# 2. Oddiy suhbat (DeepSeek-V3)
-@dp.message(F.text)
-async def chat(msg: types.Message):
-    if msg.text.startswith("/"): return
-    
-    res = client.chat.completions.create(
-        model="deepseek-chat",
-        messages=[
-            {"role": "system", "content": "Sen SYLENTH Agentsan. Oddiy va professional javob ber."},
-            {"role": "user", "content": msg.text}
-        ]
-    )
-    await msg.answer(res.choices[0].message.content)
+# Routerlarni ulash
+dp.include_router(commands.router)
+dp.include_router(messages.router)
+dp.include_router(group.router)
+
+# Callback handler (rejim tanlash)
+@dp.callback_query(F.data.startswith("mode_"))
+async def on_mode_select(callback: types.CallbackQuery, state: FSMContext):
+    mode = callback.data.split("_")[1]
+    mode_map = {
+        "draw":   (UserMode.draw,   "🎨 <b>Rasm rejimi</b> — tavsif yozing"),
+        "search": (UserMode.search, "🔍 <b>Qidiruv rejimi</b> — savolingizni bering"),
+        "think":  (UserMode.think,  "🧠 <b>Chuqur mantiq</b> — murakkab masalani yuboring"),
+        "chat":   (UserMode.chat,   "💬 <b>Suhbat rejimi</b> — istalganini yozing"),
+    }
+    new_state, text = mode_map[mode]
+    await state.set_state(new_state)
+    await callback.message.answer(text, parse_mode="HTML")
+    await callback.answer(f"✅ Rejim o'zgartirildi")
 
 async def main():
-    print("Bot ishga tushdi...")
-    await dp.start_polling(bot)
+    init_db()
+    logging.info("🚀 SYLENTH Agent ishga tushdi!")
+    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 if __name__ == "__main__":
     asyncio.run(main())
-    

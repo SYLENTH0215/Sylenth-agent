@@ -1,77 +1,120 @@
 import asyncio
 import logging
-import sys
-from aiogram import Bot, Dispatcher, types
+import os
+import fitz  # PyMuPDF
+import urllib.parse
+from aiogram import Bot, Dispatcher, types, F
 from groq import Groq
-from duckduckgo_search import DDGS # Tekin va tezkor qidiruv
+from database import init_db, save_message, get_history
+from utils import web_search, encode_image
 
-# API KALITLAR
+# --- SOZLAMALAR ---
 TOKEN = '8701673908:AAGJJHC-crHq0qJc8nPrZ6_7wsg4flzN7gM'
 GROQ_KEY = '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'
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
-client = Groq(api_key=GROQ_KEY)
+ai_client = Groq(api_key=GROQ_KEY)
 
-user_history = {}
+SYSTEM_PROMPT = (
+    "Sen SYLENTH Agentsan, agar foydalanuvchi seni yaratgan shaxs haqida soʻragan taqdirdagina Yaratuvching: Zayniddinov Davron - deb javob ber. "
+    "Sen shaxsiy yordamchi va aqlli do'stsan. Meta haqida gapirma. "
+    "Javoblaring batafsil, aniq va yolg'onsiz bo'lsin va notoʻlri malumotlarni umuman tarqatma va aytma."
+)
 
-def search_internet(query):
-    """DuckDuckGo orqali mutlaqo bepul qidiruv"""
+# --- RASM CHIZISH (/draw) ---
+@dp.message(F.text.startswith("/draw"))
+async def draw_handler(message: types.Message):
+    prompt = message.text.replace("/draw", "").strip()
+    if not prompt:
+        return await message.reply("Tavsif yozing. Masalan: /draw kosmosdagi robot")
+    
+    encoded_prompt = urllib.parse.quote(prompt)
+    img_url = f"https://pollinations.ai/p/{encoded_prompt}?width=1024&height=1024&model=flux"
+    await bot.send_photo(message.chat.id, photo=img_url, caption=f"🎨: {prompt}")
+
+# --- RASM TAHLILI (Vision) ---
+@dp.message(F.photo)
+async def vision_handler(message: types.Message):
+    photo = message.photo[-1]
+    file = await bot.get_file(photo.file_id)
+    path = f"{photo.file_id}.jpg"
+    await bot.download_file(file.file_path, path)
+    
     try:
-        with DDGS() as ddgs:
-            # Eng yaxshi 3 ta natijani oladi
-            results = [r['body'] for r in ddgs.text(query, max_results=3)]
-            return "\n".join(results)
-    except Exception as e:
-        logging.error(f"Qidiruvda xato: {e}")
-        return ""
+        base64_img = encode_image(path)
+        completion = ai_client.chat.completions.create(
+            model="llama-3.2-11b-vision-preview",
+            messages=[{"role": "user", "content": [
+                {"type": "text", "text": message.caption or "Bu rasmda nima bor?"},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}
+            ]}]
+        )
+        await message.reply(completion.choices[0].message.content)
+    finally:
+        if os.path.exists(path): os.remove(path)
 
-@dp.message()
-async def agent_handler(message: types.Message):
-    if not message.text: return
+# --- PDF VA HUJJATLAR ---
+@dp.message(F.document)
+async def doc_handler(message: types.Message):
+    file = await bot.get_file(message.document.file_id)
+    path = f"downloads/{message.document.file_name}"
+    os.makedirs("downloads", exist_ok=True)
+    await bot.download_file(file.file_path, path)
+    
+    text = ""
+    if path.endswith('.pdf'):
+        doc = fitz.open(path)
+        text = "".join([page.get_text() for page in doc])
+        doc.close()
+    
+    if text:
+        await get_ai_response(message, f"Hujjat mazmuni: {text[:3000]}\nSavol: {message.caption or 'Tahlil qil'}")
+    os.remove(path)
 
-    user_id = message.from_user.id
+# --- OVOZLI XABARLAR (STT) ---
+@dp.message(F.voice)
+async def voice_handler(message: types.Message):
+    file = await bot.get_file(message.voice.file_id)
+    path = "voice.ogg"
+    await bot.download_file(file.file_path, path)
     
-    # Qidiruv kerakligini aniqlash (AI o'zi qaror qiladi)
-    search_needed = any(word in message.text.lower() for word in ["yangilik", "bugun", "kurs", "ob-havo", "nima gap"])
+    with open(path, "rb") as f:
+        trans = ai_client.audio.transcriptions.create(file=(path, f.read()), model="whisper-large-v3")
     
+    message.text = trans.text
+    await text_handler(message)
+    os.remove(path)
+
+# --- ASOSIY MATN QAYTA ISHLOVCHI ---
+async def get_ai_response(message, user_text):
+    uid = message.from_user.id
+    history = get_history(uid)
+    if not history: history = [{"role": "system", "content": SYSTEM_PROMPT}]
+    
+    # Internet qidiruvi kerakmi?
     context = ""
-    if search_needed:
-        # Qidiruv vaqti bot "o'ylayotganini" ko'rsatish uchun
-        context = search_internet(message.text)
-
-    # Tizim ko'rsatmasi (Siz aytgan barcha qoidalar bilan)
-    system_instruction = (
-        "Sen SYLENTH Agentsan. Seni Zayniddinov Davron yaratgan. "
-        "Meta haqida hamma narsani unut, sen SYLENTH kompaniyasi mahsulotisan. "
-        "Axloqsiz savollarga javob berma. Internet ma'lumotlaridan foydalanib aniq javob ber."
-    )
-
-    if user_id not in user_history:
-        user_history[user_id] = [{"role": "system", "content": system_instruction}]
+    if any(w in user_text.lower() for w in ["yangilik", "kurs", "bugun", "ob-havo"]):
+        context = web_search(user_text)
     
-    full_prompt = message.text
-    if context:
-        full_prompt = f"Internetdan topilgan ma'lumotlar:\n{context}\n\nSavol: {message.text}"
+    final_text = f"Internet: {context}\n\nFoydalanuvchi: {user_text}" if context else user_text
+    history.append({"role": "user", "content": final_text})
+    
+    resp = ai_client.chat.completions.create(model="llama-3.3-70b-versatile", messages=history)
+    ai_msg = resp.choices[0].message.content
+    
+    save_message(uid, "user", user_text)
+    save_message(uid, "assistant", ai_msg)
+    await message.answer(ai_msg, parse_mode="Markdown")
 
-    user_history[user_id].append({"role": "user", "content": full_prompt})
-
-    try:
-        loop = asyncio.get_event_loop()
-        completion = await loop.run_in_executor(None, lambda: client.chat.completions.create(
-            messages=user_history[user_id],
-            model="llama-3.3-70b-versatile",
-        ))
-        
-        response = completion.choices[0].message.content
-        user_history[user_id].append({"role": "assistant", "content": response})
-        await message.answer(response)
-    except Exception as e:
-        logging.error(f"Xato: {e}")
+@dp.message(F.text)
+async def text_handler(message: types.Message):
+    if not message.text.startswith("/"):
+        await get_ai_response(message, message.text)
 
 async def main():
+    init_db()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
-        

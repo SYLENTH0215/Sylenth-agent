@@ -1,4 +1,7 @@
-aiogram
+aiogram==3.13.1
 openai
-pymupdf
+duckduckgo-search
 python-dotenv
+aiohttp
+aiofiles
+PyMuPDF

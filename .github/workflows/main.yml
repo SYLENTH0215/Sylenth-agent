@@ -1,0 +1,21 @@
+name: SYLENTH 24/7
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '0 */5 * * *' # Har 5 soatda botni yangilaydi
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Python o'rnatish
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: Kutubxonalarni o'rnatish
+        run: pip install aiogram groq
+      - name: Botni ishga tushirish
+        run: timeout 5h python main.py || true
+        

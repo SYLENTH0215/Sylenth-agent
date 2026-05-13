@@ -216,3 +216,17 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Python kesh fayllari
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Maxfiy kalitlar (Muhim!)
+.env
+venv/
+env/
+
+# Loglar
+*.log
+

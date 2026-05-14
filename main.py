@@ -1,44 +1,37 @@
 import asyncio
 import logging
-import os
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 
-# --- YANGILANGAN KONFIGURATSIYA ---
+# --- YANGILANGAN KONFIGURATSIYA (2026-yil, May) ---
 BOT_TOKEN = "8701673908:AAGk2e6J8X79AvVE2VuajywwiuvnK_GhqC8"
-DEEPSEEK_KEY = "sk-cc0d6273dd284087b41bc15ab32dfcd1"
+DEEPSEEK_KEY = "sk-c5ecf085378146fea99fff7b49cc5b93"
 ADMIN_ID = 20100215
-# ----------------------------------
+# --------------------------------------------------
 
-# Logging sozlamalari
 logging.basicConfig(
     level=logging.INFO, 
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
-# Modullarni import qilish
-# DIQQAT: Bu fayllar main.py bilan bir xil papkada bo'lishi shart!
+# Modullarni import qilish (Fayllar mavjudligini tekshiring)
 try:
     from database import init_db
     from keyboards import get_main_menu
     from states import UserMode
     from handlers import commands, messages, group
 except ImportError as e:
-    logging.error(f"❌ Fayllar yetishmayapti: {e}")
-    logging.info("Maslahat: database.py, keyboards.py, states.py va handlers/ papkasini tekshiring.")
+    logging.error(f"❌ Fayl topilmadi: {e}")
 
-# Bot va Dispatcher
+# Bot obyektini yaratish
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
 # Routerlarni ulash
-try:
-    dp.include_router(commands.router)
-    dp.include_router(messages.router)
-    dp.include_router(group.router)
-except NameError:
-    logging.warning("⚠️ Routerlar yuklanmadi, importlarni tekshiring.")
+dp.include_router(commands.router)
+dp.include_router(messages.router)
+dp.include_router(group.router)
 
 # Callback handler (rejim tanlash)
 @dp.callback_query(F.data.startswith("mode_"))
@@ -56,21 +49,20 @@ async def on_mode_select(callback: types.CallbackQuery, state: FSMContext):
         new_state, text = mode_map[mode]
         await state.set_state(new_state)
         await callback.message.answer(text, parse_mode="HTML")
-        await callback.answer(f"✅ Rejim o'zgartirildi")
+        await callback.answer(f"✅ {mode.capitalize()} rejimi faollashdi")
     else:
-        await callback.answer("❌ Xato: Rejim topilmadi")
+        await callback.answer("Noma'lum rejim")
 
 async def main():
-    # MB ishga tushirish
+    # Ma'lumotlar bazasini ochish
     try:
         init_db()
     except Exception as e:
-        logging.error(f"❌ Baza xatosi: {e}")
+        logging.error(f"MB xatosi: {e}")
 
-    logging.info(f"🚀 SYLENTH Agent yangi token bilan ishga tushdi!")
-    logging.info(f"Admin: {ADMIN_ID}")
+    logging.info(f"🚀 SYLENTH Agent yangi DeepSeek API bilan ishga tushdi!")
     
-    # Botni polling rejimida ishga tushirish
+    # Botni ishga tushirish
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 if __name__ == "__main__":

@@ -7,8 +7,11 @@ from utils import web_search, encode_image_bytes, extract_pdf_text, get_image_ur
 from states import UserMode
 
 router = Router()
+
+# --- KONFIGURATSIYA (API kalit to'g'ridan-to'g'ri ulandi) ---
+DEEPSEEK_KEY = "sk-c5ecf085378146fea99fff7b49cc5b93"
 client = OpenAI(
-    api_key=os.getenv("DEEPSEEK_KEY"),
+    api_key=DEEPSEEK_KEY,
     base_url="https://api.deepseek.com"
 )
 
@@ -28,25 +31,36 @@ async def ask_deepseek(
     chat_id = message.chat.id
     user_id = message.from_user.id
 
-    save_message(chat_id, user_id, "user", user_text)
-    history = get_history(chat_id)
+    # Xabarni bazaga saqlash
+    try:
+        save_message(chat_id, user_id, "user", user_text)
+        history = get_history(chat_id)
+    except Exception:
+        history = [] # Baza bilan muammo bo'lsa, suhbat davom etaveradi
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages_list = [{"role": "system", "content": SYSTEM_PROMPT}]
     if extra_context:
-        messages.append({"role": "system", "content": extra_context})
-    messages += history
+        messages_list.append({"role": "system", "content": extra_context})
+    
+    # Tarixni qo'shish
+    messages_list += history
 
     try:
         response = client.chat.completions.create(
             model=model,
-            messages=messages,
+            messages=messages_list,
             max_tokens=2048
         )
         reply = response.choices[0].message.content
-        save_message(chat_id, user_id, "assistant", reply)
+        
+        # Javobni bazaga saqlash
+        try:
+            save_message(chat_id, user_id, "assistant", reply)
+        except: pass
+
         await message.answer(reply, parse_mode="HTML")
     except Exception as e:
-        await message.answer(f"⚠️ Xato: <code>{e}</code>", parse_mode="HTML")
+        await message.answer(f"⚠️ API xatosi: <code>{e}</code>", parse_mode="HTML")
 
 # --- Oddiy matn ---
 @router.message(UserMode.chat, F.text)
@@ -57,8 +71,11 @@ async def handle_chat(message: types.Message):
 @router.message(UserMode.search, F.text)
 async def handle_search(message: types.Message):
     status = await message.answer("🔍 Qidirilmoqda...")
-    results = web_search(message.text)
-    context = f"Internet natijalar:\n{results}" if results else ""
+    try:
+        results = web_search(message.text)
+        context = f"Internet natijalar:\n{results}" if results else ""
+    except:
+        context = ""
     await status.delete()
     await ask_deepseek(message, message.text, extra_context=context)
 
@@ -67,14 +84,15 @@ async def handle_search(message: types.Message):
 async def handle_think(message: types.Message):
     status = await message.answer("🧠 Tahlil qilinmoqda...")
     await status.delete()
+    # 2026-yilda 'deepseek-reasoner' modeli 'deepseek-v4-pro' deb atalishi mumkin
     await ask_deepseek(message, message.text, model="deepseek-reasoner")
 
 # --- Rasm rejimi ---
 @router.message(UserMode.draw, F.text)
 async def handle_draw(message: types.Message):
     status = await message.answer("🎨 Yaratilmoqda...")
-    url = get_image_url(message.text)
     try:
+        url = get_image_url(message.text)
         await message.answer_photo(url, caption=f"✨ <b>{message.text}</b>", parse_mode="HTML")
     except Exception:
         await message.answer("⚠️ Rasm yaratib bo'lmadi.")
@@ -84,13 +102,15 @@ async def handle_draw(message: types.Message):
 @router.message(F.photo)
 async def handle_photo(message: types.Message):
     status = await message.answer("👁 Rasm tahlil qilinmoqda...")
-    photo = message.photo[-1]
-    file = await message.bot.get_file(photo.file_id)
-    img_bytes = await message.bot.download_file(file.file_path)
-    b64 = encode_image_bytes(img_bytes.read())
-    caption = message.caption or "Bu rasmda nima bor? Batafsil tushuntir."
-
     try:
+        photo = message.photo[-1]
+        file = await message.bot.get_file(photo.file_id)
+        img_bytes = await message.bot.download_file(file.file_path)
+        
+        # Binary formatda o'qish va kodlash
+        b64 = encode_image_bytes(img_bytes.getvalue())
+        caption = message.caption or "Bu rasmda nima bor? Batafsil tushuntir."
+
         response = client.chat.completions.create(
             model="deepseek-chat",
             messages=[{
@@ -110,17 +130,25 @@ async def handle_photo(message: types.Message):
 # --- PDF ---
 @router.message(F.document)
 async def handle_document(message: types.Message):
-    if not message.document.file_name.endswith(".pdf"):
+    if not message.document.file_name.lower().endswith(".pdf"):
         return await message.answer("📎 Faqat PDF qabul qilinadi.")
+    
     status = await message.answer("📄 PDF o'qilmoqda...")
-    file = await message.bot.get_file(message.document.file_id)
-    pdf_bytes = await message.bot.download_file(file.file_path)
-    text = extract_pdf_text(pdf_bytes.read())
-    if not text:
-        return await message.answer("⚠️ PDF dan matn ajratib bo'lmadi.")
-    question = message.caption or "Bu hujjatni qisqacha xulosala."
-    await status.delete()
-    await ask_deepseek(
-        message, question,
-        extra_context=f"PDF mazmuni:\n{text}"
-)
+    try:
+        file = await message.bot.get_file(message.document.file_id)
+        pdf_bytes = await message.bot.download_file(file.file_path)
+        text = extract_pdf_text(pdf_bytes.getvalue())
+        
+        if not text:
+            await status.edit_text("⚠️ PDF dan matn ajratib bo'lmadi.")
+            return
+
+        question = message.caption or "Bu hujjatni qisqacha xulosala."
+        await status.delete()
+        await ask_deepseek(
+            message, question,
+            extra_context=f"PDF mazmuni:\n{text}"
+        )
+    except Exception as e:
+        await status.edit_text(f"⚠️ PDF xatosi: {e}")
+    

@@ -1,7 +1,10 @@
 aiogram==3.13.1
-openai
-duckduckgo-search
+google-generativeai>=0.8.0
 python-dotenv
 aiohttp
 aiofiles
+yt-dlp
 PyMuPDF
+Pillow
+mutagen
+psutil

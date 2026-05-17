@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 
+# Logging sozlamalari
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
@@ -11,24 +12,26 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 
+# To'g'ridan-to'g'ri config.py faylidan yuklaymiz
 from config import BOT_TOKEN, ADMIN_ID, DOWNLOADS_DIR
+
 from database import init_db, get_user
 from keyboards import main_menu
 from states import UserMode
 from middlewares.anti_flood import AntiFloodMiddleware
 from middlewares.access import AccessMiddleware
 
-# Handlerlarni import qilish
+# Handlerlarni mukammal tartibda yuklash
 from handlers import commands, messages, media, ceo, group
 
 bot = Bot(token=BOT_TOKEN)
 dp  = Dispatcher(storage=MemoryStorage())
 
-# Middleware tizimi
+# Middleware'larni ro'yxatdan o'tkazish
 dp.message.middleware(AntiFloodMiddleware())
 dp.message.middleware(AccessMiddleware())
 
-# Routerlar ketma-ketligi (Media router muvaffaqiyatli qo'shildi! 🚀)
+# Routerlar ketma-ketligi (Media router joyiga qaytarildi! 🚀)
 dp.include_router(commands.router)
 dp.include_router(ceo.router)
 dp.include_router(group.router)
@@ -74,11 +77,12 @@ async def cb_cancel(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserMode.chat)
     await callback.message.edit_text("❌ Bekor qilindi.", reply_markup=main_menu())
 
+# Bot ishga tushgandagi jarayonlar
 async def on_startup():
     init_db()
     os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
-    # Botga birinchi marta kirganda chiqadigan chiroyli tavsif matni (Barcha tillar uchun)
+    # 🤖 Botga kirgandagi universal tavsif matni (O'zbekcha)
     description_text = (
         "🤖 SYLENTH Agent — sun'iy intellekt asosida ishlaydigan ko'p funksiyali universal yordamchi!\n\n"
         "Bu yerda siz:\n"
@@ -90,6 +94,7 @@ async def on_startup():
         "Suhbatni boshlash uchun quyidagi 'Start' tugmasini bosing! 👇"
     )
     try:
+        # Barcha interfeys tillari uchun descriptionni majburiy o'rnatish
         await bot.set_my_description(description_text)
         await bot.set_my_description(description_text, language_code="uz")
         await bot.set_my_description(description_text, language_code="ru")
@@ -103,12 +108,13 @@ async def on_startup():
         try:
             await bot.send_message(
                 ADMIN_ID, 
-                "🟢 <b>SYLENTH Agent online!</b>\n\nBot muvaffaqiyatli ishga tushdi.", 
+                "🟢 <b>SYLENTH Agent online!</b>\n\nBot muvaffaqiyatli ishga tushdi va xizmatga tayyor.", 
                 parse_mode="HTML"
             )
         except Exception:
             pass
 
+# Main pollingni ishga tushirish
 async def main():
     dp.startup.register(on_startup)
     await bot.delete_webhook(drop_pending_updates=True)
@@ -121,3 +127,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logging.info("Bot to'xtatildi.")
+    

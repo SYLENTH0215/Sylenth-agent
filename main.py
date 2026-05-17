@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 
+# Logging sozlamalari
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
@@ -11,7 +12,7 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 
-# To'g'ridan-to'g'ri config.py faylidan import qilamiz
+# To'g'ridan-to'g'ri config.py faylidan yuklaymiz
 from config import BOT_TOKEN, ADMIN_ID, DOWNLOADS_DIR
 
 from database import init_db
@@ -21,20 +22,22 @@ from middlewares.anti_flood import AntiFloodMiddleware
 from middlewares.access import AccessMiddleware
 from handlers import commands, messages, media, ceo, group
 
+# Bot va Dispatcher obyektlari
 bot = Bot(token=BOT_TOKEN)
 dp  = Dispatcher(storage=MemoryStorage())
 
-# Middleware'lar
+# Middleware'larni ulash
 dp.message.middleware(AntiFloodMiddleware())
 dp.message.middleware(AccessMiddleware())
 
-# Routerlar (Ketma-ketlik o'ta muhim!)
+# Routerlarni to'g'ri ketma-ketlikda ulash
 dp.include_router(commands.router)
 dp.include_router(ceo.router)
 dp.include_router(group.router)
 dp.include_router(media.router)
 dp.include_router(messages.router)
 
+# Rejim tanlash callback handlerlari
 @dp.callback_query(F.data.startswith("mode_"))
 async def on_mode_select(callback: types.CallbackQuery, state: FSMContext):
     mode = callback.data.split("_")[1]
@@ -75,10 +78,12 @@ async def cb_cancel(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserMode.chat)
     await callback.message.edit_text("❌ Bekor qilindi.", reply_markup=main_menu())
 
+# Bot ishga tushgandagi jarayonlar
 async def on_startup():
-    init_db()
+    init_db()  # 🌟 Mana shu yerda sylenth.db avtomatik ravishda ochiladi!
     os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
+    # Bot tavsifini barcha tillar uchun o'rnatish
     description_text = (
         "🤖 SYLENTH Agent — sun'iy intellekt asosida ishlaydigan ko'p funksiyali universal yordamchi!\n\n"
         "Bu yerda siz:\n"
@@ -109,6 +114,7 @@ async def on_startup():
         except Exception:
             pass
 
+# Main ishga tushirish funksiyasi
 async def main():
     dp.startup.register(on_startup)
     await bot.delete_webhook(drop_pending_updates=True)

@@ -5,3 +5,8 @@ class UserMode(StatesGroup):
     draw   = State()
     search = State()
     think  = State()
+    dl     = State()
+
+class CEOState(StatesGroup):
+    broadcast = State()
+    ban_input = State()

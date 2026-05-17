@@ -1,73 +1,89 @@
 import asyncio
 import logging
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
+from config import BOT_TOKEN, ADMIN_ID
+from database import init_db
+from keyboards import main_menu
+from states import UserMode
+from middlewares.anti_flood import AntiFloodMiddleware
+from middlewares.access import AccessMiddleware
+from handlers import commands, messages, ceo, group
 
-# --- YANGILANGAN KONFIGURATSIYA (2026-yil, May) ---
-BOT_TOKEN = "8701673908:AAGk2e6J8X79AvVE2VuajywwiuvnK_GhqC8"
-DEEPSEEK_KEY = "sk-c5ecf085378146fea99fff7b49cc5b93"
-ADMIN_ID = 20100215
-# --------------------------------------------------
-
-logging.basicConfig(
-    level=logging.INFO, 
-    format="%(asctime)s | %(levelname)s | %(message)s"
-)
-
-# Modullarni import qilish (Fayllar mavjudligini tekshiring)
-try:
-    from database import init_db
-    from keyboards import get_main_menu
-    from states import UserMode
-    from handlers import commands, messages, group
-except ImportError as e:
-    logging.error(f"❌ Fayl topilmadi: {e}")
-
-# Bot obyektini yaratish
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
+dp  = Dispatcher(storage=MemoryStorage())
 
-# Routerlarni ulash
+dp.message.middleware(AntiFloodMiddleware())
+dp.message.middleware(AccessMiddleware())
+
 dp.include_router(commands.router)
-dp.include_router(messages.router)
+dp.include_router(ceo.router)
 dp.include_router(group.router)
+dp.include_router(messages.router)
 
-# Callback handler (rejim tanlash)
 @dp.callback_query(F.data.startswith("mode_"))
 async def on_mode_select(callback: types.CallbackQuery, state: FSMContext):
     mode = callback.data.split("_")[1]
-    
-    mode_map = {
-        "draw":   (UserMode.draw,   "🎨 <b>Rasm rejimi</b> — tavsif yozing"),
-        "search": (UserMode.search, "🔍 <b>Qidiruv rejimi</b> — savolingizni bering"),
-        "think":  (UserMode.think,  "🧠 <b>Chuqur mantiq</b> — murakkab masalani yuboring"),
+    config = {
+        "draw":   (UserMode.draw,   "🎨 <b>Rasm rejimi</b> — tavsif yozing\nMisol: <i>kiberpank shahar, neon chiroqlar</i>"),
+        "search": (UserMode.search, "🔍 <b>Qidiruv rejimi</b> — savolingizni yozing"),
+        "think":  (UserMode.think,  "🧠 <b>Chuqur tahlil</b> — murakkab savol yuboring"),
+        "dl":     (UserMode.dl,     "📥 <b>Media rejimi</b> — video link yoki <code>/music qo'shiq</code>"),
         "chat":   (UserMode.chat,   "💬 <b>Suhbat rejimi</b> — istalganini yozing"),
     }
-    
-    if mode in mode_map:
-        new_state, text = mode_map[mode]
-        await state.set_state(new_state)
-        await callback.message.answer(text, parse_mode="HTML")
-        await callback.answer(f"✅ {mode.capitalize()} rejimi faollashdi")
-    else:
-        await callback.answer("Noma'lum rejim")
+    if mode not in config:
+        return await callback.answer("Noma'lum rejim", show_alert=True)
+    new_state, text = config[mode]
+    await state.set_state(new_state)
+    await callback.message.edit_text(text + "\n\n🔙 /start — menyuga qaytish", parse_mode="HTML")
+    await callback.answer("✅ Rejim o'rnatildi")
+
+@dp.callback_query(F.data == "my_id")
+async def cb_my_id(callback: types.CallbackQuery):
+    from database import get_user
+    user = get_user(callback.from_user.id)
+    if user:
+        await callback.answer(f"🆔 SYLENTH ID: {user['sylenth_id']}\n💬 Xabarlar: {user['msg_count']}", show_alert=True)
+
+@dp.callback_query(F.data == "help")
+async def cb_help(callback: types.CallbackQuery):
+    await callback.message.edit_text(
+        "📖 <b>SYLENTH Agent — Imkoniyatlar:</b>\n\n"
+        "🎨 Rasm yaratish (Flux.1)\n🔍 Internet qidiruv\n"
+        "🧠 Chuqur tahlil\n📥 Video/Musiqa yuklash\n"
+        "👁 Rasm tahlil (Vision)\n📄 PDF o'qish\n\n"
+        "/start /help /clear /id /draw /music",
+        parse_mode="HTML", reply_markup=main_menu()
+    )
+
+@dp.callback_query(F.data == "cancel")
+async def cb_cancel(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(UserMode.chat)
+    await callback.message.edit_text("❌ Bekor qilindi.", reply_markup=main_menu())
+
+async def on_startup():
+    init_db()
+    os.makedirs("downloads", exist_ok=True)
+    me = await bot.get_me()
+    logging.info(f"🚀 SYLENTH Agent ishga tushdi! @{me.username}")
+    if ADMIN_ID:
+        try:
+            await bot.send_message(ADMIN_ID, "🟢 <b>SYLENTH Agent online!</b>", parse_mode="HTML")
+        except Exception:
+            pass
 
 async def main():
-    # Ma'lumotlar bazasini ochish
-    try:
-        init_db()
-    except Exception as e:
-        logging.error(f"MB xatosi: {e}")
-
-    logging.info(f"🚀 SYLENTH Agent yangi DeepSeek API bilan ishga tushdi!")
-    
-    # Botni ishga tushirish
-    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    dp.startup.register(on_startup)
+    await dp.start_polling(bot, allowed_updates=[
+        "message", "callback_query", "inline_query", "my_chat_member"
+    ])
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logging.info("Bot to'xtatildi!")
-    
+    asyncio.run(main())

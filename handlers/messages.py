@@ -1,154 +1,110 @@
-import os
+import logging
 from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
-from openai import OpenAI
-from database import save_message, get_history
-from utils import web_search, encode_image_bytes, extract_pdf_text, get_image_url
+from config import BAN_THRESHOLD
+from database import save_message, get_history, increment_msg_count, warn_user, ban_user
+from ai_engine import ask_gemini, deep_think, is_toxic, analyze_image
+from utils import web_search, extract_pdf_text
 from states import UserMode
 
 router = Router()
+TOXIC_REPLY = "⛔ Kechirasiz, men bunday mavzularda suhbatlasha olmayman.\nIltimos, foydali mavzuda murojaat qiling."
 
-# --- KONFIGURATSIYA (API kalit to'g'ridan-to'g'ri ulandi) ---
-DEEPSEEK_KEY = "sk-c5ecf085378146fea99fff7b49cc5b93"
-client = OpenAI(
-    api_key=DEEPSEEK_KEY,
-    base_url="https://api.deepseek.com"
-)
-
-SYSTEM_PROMPT = (
-    "Sen SYLENTH Agent — Zayniddinov Davron tomonidan yaratilgan "
-    "eng zamonaviy AI yordamchisan. O'zbek tilida mukammal, professional "
-    "va qisqa javob ber. Keraksiz takrorlashlardan qoching."
-)
-
-# --- DeepSeek umumiy funksiya ---
-async def ask_deepseek(
-    message: types.Message,
-    user_text: str,
-    model: str = "deepseek-chat",
-    extra_context: str = ""
-):
+async def _ai_reply(message: types.Message, text: str, model_fn, **kwargs):
     chat_id = message.chat.id
-    user_id = message.from_user.id
+    tg_id   = message.from_user.id
+    history = get_history(chat_id)
 
-    # Xabarni bazaga saqlash
+    if is_toxic(text):
+        warns = warn_user(tg_id)
+        if warns >= BAN_THRESHOLD:
+            ban_user(tg_id, "Takroriy odobsiz so'rovlar")
+            return await message.answer("🚫 Qoidabuzarlik sababli bloklandingiz.")
+        return await message.answer(f"{TOXIC_REPLY}\n\n⚠️ Ogohlantirish: {warns}/{BAN_THRESHOLD}")
+
+    thinking = await message.answer("⏳ Javob tayyorlanmoqda...")
     try:
-        save_message(chat_id, user_id, "user", user_text)
-        history = get_history(chat_id)
-    except Exception:
-        history = [] # Baza bilan muammo bo'lsa, suhbat davom etaveradi
-
-    messages_list = [{"role": "system", "content": SYSTEM_PROMPT}]
-    if extra_context:
-        messages_list.append({"role": "system", "content": extra_context})
-    
-    # Tarixni qo'shish
-    messages_list += history
-
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages_list,
-            max_tokens=2048
-        )
-        reply = response.choices[0].message.content
-        
-        # Javobni bazaga saqlash
-        try:
-            save_message(chat_id, user_id, "assistant", reply)
-        except: pass
-
-        await message.answer(reply, parse_mode="HTML")
+        reply = model_fn(text, history, **kwargs)
+        save_message(chat_id, tg_id, "user", text)
+        save_message(chat_id, tg_id, "model", reply)
+        increment_msg_count(tg_id)
+        for i in range(0, len(reply), 4000):
+            await message.answer(reply[i:i+4000])
     except Exception as e:
-        await message.answer(f"⚠️ API xatosi: <code>{e}</code>", parse_mode="HTML")
+        logging.error(f"AI reply xatosi: {e}")
+        await message.answer("⚠️ Vaqtinchalik nosozlik. Keyinroq urinib ko'ring.")
+    finally:
+        await thinking.delete()
 
-# --- Oddiy matn ---
 @router.message(UserMode.chat, F.text)
 async def handle_chat(message: types.Message):
-    await ask_deepseek(message, message.text)
+    await _ai_reply(message, message.text, ask_gemini)
 
-# --- Qidiruv rejimi ---
 @router.message(UserMode.search, F.text)
 async def handle_search(message: types.Message):
-    status = await message.answer("🔍 Qidirilmoqda...")
-    try:
-        results = web_search(message.text)
-        context = f"Internet natijalar:\n{results}" if results else ""
-    except:
-        context = ""
+    status = await message.answer("🔍 Internetdan qidirilmoqda...")
+    results = web_search(message.text)
     await status.delete()
-    await ask_deepseek(message, message.text, extra_context=context)
+    extra = f"📡 Internet natijalar:\n{results}\n\n" if results else ""
+    await _ai_reply(message, message.text, ask_gemini, extra_context=extra)
 
-# --- Chuqur mantiq rejimi ---
 @router.message(UserMode.think, F.text)
 async def handle_think(message: types.Message):
-    status = await message.answer("🧠 Tahlil qilinmoqda...")
-    await status.delete()
-    # 2026-yilda 'deepseek-reasoner' modeli 'deepseek-v4-pro' deb atalishi mumkin
-    await ask_deepseek(message, message.text, model="deepseek-reasoner")
+    await _ai_reply(message, message.text, deep_think)
 
-# --- Rasm rejimi ---
 @router.message(UserMode.draw, F.text)
 async def handle_draw(message: types.Message):
-    status = await message.answer("🎨 Yaratilmoqda...")
-    try:
-        url = get_image_url(message.text)
-        await message.answer_photo(url, caption=f"✨ <b>{message.text}</b>", parse_mode="HTML")
-    except Exception:
-        await message.answer("⚠️ Rasm yaratib bo'lmadi.")
-    await status.delete()
+    from handlers.media import send_image
+    await send_image(message, message.text)
 
-# --- Rasm (Vision) ---
+@router.message(UserMode.dl, F.text)
+async def handle_dl(message: types.Message):
+    from handlers.media import smart_download
+    await smart_download(message, message.text)
+
 @router.message(F.photo)
 async def handle_photo(message: types.Message):
     status = await message.answer("👁 Rasm tahlil qilinmoqda...")
     try:
-        photo = message.photo[-1]
-        file = await message.bot.get_file(photo.file_id)
-        img_bytes = await message.bot.download_file(file.file_path)
-        
-        # Binary formatda o'qish va kodlash
-        b64 = encode_image_bytes(img_bytes.getvalue())
-        caption = message.caption or "Bu rasmda nima bor? Batafsil tushuntir."
-
-        response = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                    {"type": "text", "text": caption}
-                ]
-            }],
-            max_tokens=1024
-        )
-        await message.answer(response.choices[0].message.content)
+        photo   = message.photo[-1]
+        file    = await message.bot.get_file(photo.file_id)
+        io_file = await message.bot.download_file(file.file_path)
+        img_b   = io_file.read()
+        prompt  = message.caption or "Bu rasmda nima tasvirlangan? Batafsil tushuntir."
+        if is_toxic(prompt):
+            await status.delete()
+            return await message.answer(TOXIC_REPLY)
+        reply = analyze_image(img_b, prompt)
+        await message.answer(reply)
     except Exception as e:
-        await message.answer(f"⚠️ Vision xato: <code>{e}</code>", parse_mode="HTML")
-    await status.delete()
+        logging.error(f"Vision xatosi: {e}")
+        await message.answer("⚠️ Rasmni tahlil qilib bo'lmadi.")
+    finally:
+        await status.delete()
 
-# --- PDF ---
 @router.message(F.document)
 async def handle_document(message: types.Message):
     if not message.document.file_name.lower().endswith(".pdf"):
-        return await message.answer("📎 Faqat PDF qabul qilinadi.")
-    
+        return await message.answer("📎 Faqat <b>PDF</b> fayllarni o'qiy olaman.", parse_mode="HTML")
     status = await message.answer("📄 PDF o'qilmoqda...")
     try:
-        file = await message.bot.get_file(message.document.file_id)
-        pdf_bytes = await message.bot.download_file(file.file_path)
-        text = extract_pdf_text(pdf_bytes.getvalue())
-        
-        if not text:
-            await status.edit_text("⚠️ PDF dan matn ajratib bo'lmadi.")
-            return
-
+        file    = await message.bot.get_file(message.document.file_id)
+        io_file = await message.bot.download_file(file.file_path)
+        text    = extract_pdf_text(io_file.read())
+        if not text.strip():
+            await status.delete()
+            return await message.answer("⚠️ PDF dan matn ajratib bo'lmadi.")
         question = message.caption or "Bu hujjatni qisqacha xulosala."
         await status.delete()
-        await ask_deepseek(
-            message, question,
-            extra_context=f"PDF mazmuni:\n{text}"
-        )
+        await _ai_reply(message, question, ask_gemini, extra_context=f"📄 PDF:\n{text}\n\n")
     except Exception as e:
-        await status.edit_text(f"⚠️ PDF xatosi: {e}")
-    
+        logging.error(f"PDF xatosi: {e}")
+        await status.delete()
+        await message.answer("⚠️ PDF ni o'qib bo'lmadi.")
+
+@router.message(F.text)
+async def handle_default(message: types.Message, state: FSMContext):
+    current = await state.get_state()
+    if current is None:
+        await state.set_state(UserMode.chat)
+    await handle_chat(message)

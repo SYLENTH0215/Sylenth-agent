@@ -1,5 +1,4 @@
-name: SYLENTH 24/7
-
+name: SYLENTH Agent 24/7
 on:
   push:
     branches: [ main ]
@@ -11,18 +10,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-
-      - name: Python o'rnatish
-        uses: actions/setup-python@v4
+      - uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-
+      - name: FFmpeg o'rnatish
+        run: sudo apt-get install -y ffmpeg
       - name: Kutubxonalar
         run: pip install -r requirements.txt
-
       - name: Botni ishga tushirish
         env:
-          BOT_TOKEN:    ${{ secrets.BOT_TOKEN }}
-          DEEPSEEK_KEY: ${{ secrets.DEEPSEEK_KEY }}
-          ADMIN_ID:     ${{ secrets.ADMIN_ID }}
+          BOT_TOKEN:        ${{ secrets.BOT_TOKEN }}
+          GEMINI_KEY:       ${{ secrets.GEMINI_KEY }}
+          ADMIN_ID:         ${{ secrets.ADMIN_ID }}
+          REQUIRED_CHANNEL: ${{ secrets.REQUIRED_CHANNEL }}
         run: timeout 14000 python main.py || true

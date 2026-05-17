@@ -147,7 +147,6 @@ def get_history(chat_id: int, limit: int = 10) -> list[dict]:
     )
     rows = c.fetchall()
     conn.close()
-    # Tarix teskari tartibda keladi, uni to'g'rilaymiz
     return [{"role": r[0], "parts": [r[1]]} for r in reversed(rows)]
 
 def get_stats() -> dict:
@@ -187,4 +186,4 @@ def get_recent_users(limit: int = 10) -> list[dict]:
     rows = c.fetchall()
     conn.close()
     return [dict(zip(cols, r)) for r in rows]
-        
+    

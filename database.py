@@ -187,4 +187,4 @@ def get_recent_users(limit: int = 10) -> list[dict]:
     rows = c.fetchall()
     conn.close()
     return [dict(zip(cols, r)) for r in rows]
-    
+        

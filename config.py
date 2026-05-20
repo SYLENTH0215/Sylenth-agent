@@ -4,7 +4,7 @@ import os
 BOT_TOKEN        = "8701673908:AAGk2e6J8X79AvVE2VuajywwiuvnK_GhqC8"
 GEMINI_KEY       = "AIzaSyAjLWGKSt3s21SooD7jSVKU3394wUDyw_4"
 ADMIN_ID         = 8103843122
-REQUIRED_CHANNEL = ""  # Bo'sh qoldirildi (Majburiy obuna tekshiruvi o'chiq)
+REQUIRED_CHANNEL = "https://t.me/edugrandsuz"
 
 # 🧠 SUN'IY INTELLEKT VA TIZIM SOZLAMALARI
 GEMINI_MODEL     = "gemini-2.0-flash"  # Eng barqaror va kuchli Gemini modeli

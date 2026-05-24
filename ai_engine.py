@@ -1,16 +1,15 @@
 import logging
 import io
-import google.generativeai as genai
 from PIL import Image
-from google.generativeai.types import Content, Part  # <--- To'g'ri tiplash uchun obyektlar
-from config import GEMINI_KEY, GEMINI_MODEL
+from config import OPENAI_API_KEY
+from openai import OpenAI
 
-genai.configure(api_key=GEMINI_KEY)
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 SYSTEM_PROMPT = """Sen SYLENTH Agent — SYLENTH jamoasi tomonidan yaratilgan eng zamonaviy sun'iy intellekt yordamchisan.
 
 MUTLAQ QOIDALAR:
-1. O'zingni DOIM va faqat "SYLENTH Agent" deb tanishtir. Hech qachon Google, Gemini, OpenAI, DeepSeek yoki boshqa kompaniya/model haqida gapirma. Hech qachon o'zingni boshqacha nomlama.
+1. O'zingni DOIM va faqat "SYLENTH Agent" deb tanishtir. Hech qachon OpenAI, DeepSeek yoki boshqa kompaniya/model haqida gapirma. Hech qachon o'zingni boshqacha nomlama.
 2. Asosan O'zbek tilida javob ber. Agar foydalanuvchi boshqa tilda yozsa, o'sha tilda javob ber.
 3. So'kinish, haqorat, 18+, odobsiz, zo'ravonlik yoki noqonuniy mavzularda QATIY RAVISHDA quyidagicha javob ber:
    "⛔ Kechirasiz, men bunday mavzularda suhbatlasha olmayman. Iltimos, foydali mavzuda murojaat qiling."
@@ -28,60 +27,42 @@ def is_toxic(text: str) -> bool:
     t = text.lower()
     return any(w in t for w in BANNED_WORDS)
 
-# ─── Matn javobi (Asinxron holatga keltirildi) ─────────────────
-async def ask_gemini(user_text: str, history: list = None, extra_context: str = "") -> str:
-    model = genai.GenerativeModel(
-        model_name=GEMINI_MODEL,
-        system_instruction=SYSTEM_PROMPT
-    )
-    h = []
-    if history:
-        for item in history:
-            # Google faqat "user" va "model" rollarini taniydi
-            role = "model" if item["role"] in ["assistant", "model"] else "user"
-            # Har bir matn qismini rasmiy Part obyektiga o'raymiz
-            parts = [Part.from_text(text=p) if isinstance(p, str) else p for p in item["parts"]]
-            h.append(Content(role=role, parts=parts))
-
-    chat = model.start_chat(history=h)
-
-    full_text = user_text
-    if extra_context:
-        full_text = f"{extra_context}\n\n{user_text}"
-
-    # Asinxron so'rov yuborish (Bot qotib qolmaydi)
-    response = await chat.send_message_async(full_text)
-    return response.text
-
-# ─── Vision (Rasm tahlili) ─────────────────────────────────
-def analyze_image(image_bytes: bytes, prompt: str = "") -> str:
+# ─── Matn javobi (Asinxron holatga keltirildi, OpenAI ishlaydi) ──────────────
+async def ask_ai(user_text: str) -> str:
     try:
-        model = genai.GenerativeModel(
-            model_name=GEMINI_MODEL,
-            system_instruction=SYSTEM_PROMPT
+        response = client.responses.create(
+            model="gpt-5.4-multimodal",
+            input=[{"role": "user", "content": SYSTEM_PROMPT + '\n\n' + user_text}],
+            store=True,
         )
-        img = Image.open(io.BytesIO(image_bytes))
+        return response.output_text
+    except Exception as e:
+        logging.error(f"AI xatosi: {e}")
+        return f"⚠️ Xatolik yuz berdi: {e}"
+
+# ─── Vision (Rasm tahlili) ────────────────────────────────────────────────
+async def analyze_image(image_bytes: bytes, prompt: str = "") -> str:
+    try:
         question = prompt or "Bu rasmda nima tasvirlangan? Batafsil tushuntir."
-        response = model.generate_content([question, img])
-        return response.text
+        response = client.responses.create(
+            model="gpt-5.4-multimodal",
+            input=[{"role": "user", "content": question, "image_url": image_bytes}],
+            store=True,
+        )
+        return response.output_text
     except Exception as e:
         logging.error(f"Vision xatosi: {e}")
         return "⚠️ Rasmni tahlil qilib bo'lmadi."
 
-# ─── Chuqur tahlil (Asinxron holatga keltirildi) ───────────────
-async def deep_think(user_text: str, history: list = None) -> str:
-    model = genai.GenerativeModel(
-        model_name=GEMINI_MODEL,
-        system_instruction=SYSTEM_PROMPT + "\n\nQo'shimcha: Har bir savolni CHUQUR tahlil qil. Bosqichma-bosqich mantiqiy fikrla. Har bir qadamni tushuntir."
-    )
-    h = []
-    if history:
-        for item in history:
-            role = "model" if item["role"] in ["assistant", "model"] else "user"
-            parts = [Part.from_text(text=p) if isinstance(p, str) else p for p in item["parts"]]
-            h.append(Content(role=role, parts=parts))
-
-    chat = model.start_chat(history=h)
-    response = await chat.send_message_async(user_text)
-    return response.text
-  
+# ─── Chuqur tahlil (Asinxron holatga keltirildi) ──────────────────────────
+async def deep_think(user_text: str) -> str:
+    try:
+        response = client.responses.create(
+            model="gpt-5.4-multimodal",
+            input=[{"role": "user", "content": SYSTEM_PROMPT + '\n\nQo\'shimcha: Har bir savolni CHUQUR tahlil qil. Bosqichma-bosqich mantiqiy fikrla. Har bir qadamni tushuntir.\n\n' + user_text}],
+            store=True,
+        )
+        return response.output_text
+    except Exception as e:
+        logging.error(f"Deep think xatosi: {e}")
+        return f"⚠️ Xatolik yuz berdi: {e}"

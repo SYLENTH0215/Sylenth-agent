@@ -1,4 +1,5 @@
 name: SYLENTH Agent 24/7
+
 on:
   push:
     branches: [ main ]
@@ -8,6 +9,7 @@ on:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+
     steps:
       - name: Kodni yuklab olish
         uses: actions/checkout@v3
@@ -17,11 +19,11 @@ jobs:
         with:
           python-version: '3.10'
 
-      # FFmpeg-ni eng ishonchli va tezkor usulda o'rnatish
-      - name: FFmpeg o'rnatish
-        uses: FedericoCarboni/setup-ffmpeg@v3
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      # Muammoli action olib tashlandi, uning o'rniga barqaror apt-get usuli qo'yildi
+      - name: FFmpeg o'rnatish (Ishonchli usul)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
 
       - name: Kutubxonalarni yuklash
         run: |
@@ -34,5 +36,4 @@ jobs:
           GEMINI_KEY:       ${{ secrets.GEMINI_KEY }}
           ADMIN_ID:         ${{ secrets.ADMIN_ID }}
           REQUIRED_CHANNEL: ${{ secrets.REQUIRED_CHANNEL }}
-        # 14000 soniya (~3.8 soat) davomida ishlaydi, keyin xatosiz yopiladi
-        run: timeout 14000 python main.py || true
+        run: timeout --preserve-status 14000s python main.py

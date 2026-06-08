@@ -9,6 +9,7 @@ from handlers import commands, messages, media, ceo, group
 from middlewares.anti_flood import AntiFloodMiddleware
 from middlewares.access import AccessMiddleware
 
+
 # Logging sozlash
 logging.basicConfig(
     level=logging.INFO,

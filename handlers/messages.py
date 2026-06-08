@@ -7,6 +7,7 @@ from ai_engine import ask_ai, deep_think, is_toxic, analyze_image
 from utils import web_search, extract_pdf_text
 from states import UserMode
 
+
 router = Router()
 TOXIC_REPLY = "⛔ Kechirasiz, men bunday mavzularda suhbatlasha olmayman.\nIltimos, foydali mavzuda murojaat qiling."
 

@@ -104,6 +104,7 @@ async def ceo_cleardb(callback: types.CallbackQuery):
     await callback.answer("🗑 Barcha xabarlar tozalandi!", show_alert=True)
     await callback.message.edit_text("🗑 Suhbat tarixi tozalandi.", reply_markup=ceo_panel())
 
+
 @router.callback_query(F.data == "back_main")
 async def back_main(callback: types.CallbackQuery, state: FSMContext):
     from states import UserMode

@@ -12,6 +12,7 @@ if not BOT_TOKEN:
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "")
 
+
 # OpenAI
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 PROJECT_NAME = "SylenthAgentBot"

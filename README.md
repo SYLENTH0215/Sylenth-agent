@@ -4,6 +4,7 @@ Telegram AI agent
 
 Ushbu bot Telegram chatlarini avtomatlashtirish uchun Llama 3.3 (Groq API) modelida ishlaydi.
 
+
 ## 🚀 Imkoniyatlar
 * **24/7 Ishlash:** GitHub Actions orqali uzluksiz ishlaydi.
 * **Aqlli muloqot:** Groq Cloud platformasining eng kuchli modellari bilan bog'langan.

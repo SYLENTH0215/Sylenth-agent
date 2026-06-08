@@ -47,6 +47,7 @@ async def cmd_clear(message: types.Message):
     clear_history(message.chat.id)
     await message.answer("🗑 Suhbat tarixi tozalandi!")
 
+
 @router.message(Command("id"))
 async def cmd_id(message: types.Message):
     user = get_user(message.from_user.id)

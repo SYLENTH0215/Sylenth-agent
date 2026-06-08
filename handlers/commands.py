@@ -1,6 +1,5 @@
-import asyncio
 import logging
-from aiogram import Router, types, Bot, F
+from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from config import REQUIRED_CHANNEL, ADMIN_ID
@@ -47,7 +46,6 @@ async def cmd_clear(message: types.Message):
     clear_history(message.chat.id)
     await message.answer("🗑 Suhbat tarixi tozalandi!")
 
-
 @router.message(Command("id"))
 async def cmd_id(message: types.Message):
     user = get_user(message.from_user.id)
@@ -79,7 +77,8 @@ async def cmd_music(message: types.Message):
 
 @router.message(Command("ban"))
 async def cmd_ban(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
+    # ADMIN_ID ni xavfsiz int turiga o'giramiz
+    if int(message.from_user.id) != int(ADMIN_ID):
         return
     parts = message.text.split()
     if len(parts) < 2:
@@ -92,7 +91,7 @@ async def cmd_ban(message: types.Message):
 
 @router.message(Command("unban"))
 async def cmd_unban(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
+    if int(message.from_user.id) != int(ADMIN_ID):
         return
     parts = message.text.split()
     if len(parts) < 2:
@@ -105,7 +104,7 @@ async def cmd_unban(message: types.Message):
 
 @router.message(Command("ceo"))
 async def cmd_ceo(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
+    if int(message.from_user.id) != int(ADMIN_ID):
         return
     from keyboards import ceo_panel
     await message.answer("🛡 <b>CEO Boshqaruv Paneli</b>", reply_markup=ceo_panel(), parse_mode="HTML")

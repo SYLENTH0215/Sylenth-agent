@@ -35,3 +35,4 @@ class AccessMiddleware(BaseMiddleware):
                 pass
 
         return await handler(event, data)
+

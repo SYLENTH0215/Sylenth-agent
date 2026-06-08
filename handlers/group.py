@@ -47,6 +47,7 @@ async def handle_group(message: types.Message, bot: Bot):
     if is_toxic(text):
         return await message.reply("⛔ Bunday mavzularda javob bera olmayman.")
 
+
     thinking = await message.reply("⏳ Javob tayyorlanmoqda...")
     try:
         history = get_history(message.chat.id, limit=6)

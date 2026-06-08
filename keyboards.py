@@ -5,7 +5,8 @@ def main_menu():
     b = InlineKeyboardBuilder()
     b.row(
         types.InlineKeyboardButton(text="🎨 Rasm yaratish", callback_data="mode_draw"),
-        types.InlineKeyboardButton(text="🔍 Qidirish",      callback_data="mode_search"),
+       
+ types.InlineKeyboardButton(text="🔍 Qidirish",      callback_data="mode_search"),
     )
     b.row(
         types.InlineKeyboardButton(text="🧠 Chuqur tahlil", callback_data="mode_think"),

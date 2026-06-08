@@ -5,6 +5,7 @@ from datetime import datetime
 
 DB = "sylenth.db"
 
+
 def init_db():
     """Database-ni yaratish va tabelalarni o'rnatish"""
     conn = sqlite3.connect(DB)

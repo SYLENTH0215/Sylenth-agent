@@ -7,6 +7,7 @@ client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 SYSTEM_PROMPT = """Sen SYLENTH Agent — SYLENTH jamoasi tomonidan yaratilgan sun'iy intellekt yordamchisan.
 
+
 MUTLAQ QOIDALAR:
 1. Siz do'stona va xurmatli javob berish kerak
 2. Har qanday tilda javob berish mumkin

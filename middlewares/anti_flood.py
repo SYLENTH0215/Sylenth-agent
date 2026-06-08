@@ -33,3 +33,4 @@ class AntiFloodMiddleware(BaseMiddleware):
         _flood_count[user_id] = 0
         _last_msg[user_id] = now
         return await handler(event, data)
+

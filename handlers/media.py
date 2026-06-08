@@ -1,8 +1,11 @@
 import os
 import logging
-from aiogram import types
+from aiogram import Router, types
 from utils import download_video, download_audio, get_image_url, safe_remove, file_size_mb
 from config import MAX_FILE_MB
+
+# main.py ichidagi AttributeError xatosini oldini olish uchun router yaratamiz
+router = Router()
 
 async def send_image(message: types.Message, prompt: str):
     status = await message.answer("🎨 Rasm yaratilmoqda... (10-30 soniya)")

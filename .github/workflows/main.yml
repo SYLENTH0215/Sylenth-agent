@@ -1,15 +1,13 @@
 name: SYLENTH Agent 24/7
-
 on:
   push:
     branches: [ main ]
   schedule:
-    - cron: '0 */4 * * *' # Har 4 soatda avtomatik ishga tushadi
+    - cron: '0 */4 * * *'
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-
     steps:
       - name: Kodni yuklab olish
         uses: actions/checkout@v3
@@ -19,24 +17,22 @@ jobs:
         with:
           python-version: '3.10'
 
-      # FFmpeg-ni virtual mashinaga eng xavfsiz va to'g'ri usulda o'rnatish
+      # FFmpeg-ni eng ishonchli va tezkor usulda o'rnatish
       - name: FFmpeg o'rnatish
         uses: FedericoCarboni/setup-ffmpeg@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      # Pip-ni yangilash va talab qilingan kutubxonalarni o'rnatish
       - name: Kutubxonalarni yuklash
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Botni ishga tushirish va Exit Code 100 xatosini oldini olish
       - name: Botni ishga tushirish
         env:
           BOT_TOKEN:        ${{ secrets.BOT_TOKEN }}
           GEMINI_KEY:       ${{ secrets.GEMINI_KEY }}
           ADMIN_ID:         ${{ secrets.ADMIN_ID }}
           REQUIRED_CHANNEL: ${{ secrets.REQUIRED_CHANNEL }}
-        # --preserve-status vaqt tugaganda GitHub xato (red) bermasdan, jarayonni muvaffaqiyatli yopishini ta'minlaydi
-        run: timeout --preserve-status 14000s python main.py
+        # 14000 soniya (~3.8 soat) davomida ishlaydi, keyin xatosiz yopiladi
+        run: timeout 14000 python main.py || true

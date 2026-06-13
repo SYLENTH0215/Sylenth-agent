@@ -5,6 +5,7 @@ PDF (PyMuPDF/fitz), DOCX (python-docx), XLSX (openpyxl),
 code files (plain text), ZIP archives (zipfile).
 """
 
+import asyncio
 import io
 import logging
 import os
@@ -54,16 +55,21 @@ async def analyze_pdf(file_path: str) -> str:
     try:
         import fitz  # PyMuPDF
 
-        doc = fitz.open(file_path)
-        text_parts = []
+        def _read_pdf():
+            doc = fitz.open(file_path)
+            text_parts = []
 
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            page_text = page.get_text()
-            if page_text.strip():
-                text_parts.append(f"--- Sahifa {page_num + 1} ---\n{page_text}")
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                page_text = page.get_text()
+                if page_text.strip():
+                    text_parts.append(f"--- Sahifa {page_num + 1} ---\n{page_text}")
 
-        doc.close()
+            doc.close()
+            return text_parts
+
+        loop = asyncio.get_event_loop()
+        text_parts = await loop.run_in_executor(None, _read_pdf)
 
         if not text_parts:
             return "PDF fayldan matn ajratib olib bo'lmadi (rasm asosidagi PDF bo'lishi mumkin)."
@@ -91,19 +97,25 @@ async def analyze_docx(file_path: str) -> str:
     try:
         from docx import Document
 
-        doc = Document(file_path)
-        text_parts = []
+        def _read_docx():
+            doc = Document(file_path)
+            text_parts = []
 
-        for paragraph in doc.paragraphs:
-            if paragraph.text.strip():
-                text_parts.append(paragraph.text)
+            for paragraph in doc.paragraphs:
+                if paragraph.text.strip():
+                    text_parts.append(paragraph.text)
 
-        # Also extract from tables
-        for table in doc.tables:
-            for row in table.rows:
-                row_text = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
-                if row_text:
-                    text_parts.append(row_text)
+            # Also extract from tables
+            for table in doc.tables:
+                for row in table.rows:
+                    row_text = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+                    if row_text:
+                        text_parts.append(row_text)
+
+            return text_parts
+
+        loop = asyncio.get_event_loop()
+        text_parts = await loop.run_in_executor(None, _read_docx)
 
         if not text_parts:
             return "DOCX fayldan matn ajratib olib bo'lmadi."
@@ -131,25 +143,30 @@ async def analyze_xlsx(file_path: str) -> str:
     try:
         from openpyxl import load_workbook
 
-        wb = load_workbook(file_path, read_only=True, data_only=True)
-        text_parts = []
+        def _read_xlsx():
+            wb = load_workbook(file_path, read_only=True, data_only=True)
+            text_parts = []
 
-        for sheet_name in wb.sheetnames:
-            sheet = wb[sheet_name]
-            text_parts.append(f"--- Varaq: {sheet_name} ---")
+            for sheet_name in wb.sheetnames:
+                sheet = wb[sheet_name]
+                text_parts.append(f"--- Varaq: {sheet_name} ---")
 
-            row_count = 0
-            for row in sheet.iter_rows(values_only=True):
-                row_values = [str(cell) if cell is not None else "" for cell in row]
-                row_text = " | ".join(v for v in row_values if v)
-                if row_text:
-                    text_parts.append(row_text)
-                    row_count += 1
-                    if row_count > 200:  # Limit rows per sheet
-                        text_parts.append("... [qolgan qatorlar qisqartirildi]")
-                        break
+                row_count = 0
+                for row in sheet.iter_rows(values_only=True):
+                    row_values = [str(cell) if cell is not None else "" for cell in row]
+                    row_text = " | ".join(v for v in row_values if v)
+                    if row_text:
+                        text_parts.append(row_text)
+                        row_count += 1
+                        if row_count > 200:  # Limit rows per sheet
+                            text_parts.append("... [qolgan qatorlar qisqartirildi]")
+                            break
 
-        wb.close()
+            wb.close()
+            return text_parts
+
+        loop = asyncio.get_event_loop()
+        text_parts = await loop.run_in_executor(None, _read_xlsx)
 
         if not text_parts:
             return "XLSX fayldan ma'lumot ajratib olib bo'lmadi."
@@ -175,13 +192,18 @@ async def analyze_code_file(file_path: str) -> str:
         File content or error message
     """
     try:
-        # Try UTF-8 first, then fallback to latin-1
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                content = f.read()
-        except UnicodeDecodeError:
-            with open(file_path, "r", encoding="latin-1") as f:
-                content = f.read()
+        def _read_code():
+            # Try UTF-8 first, then fallback to latin-1
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except UnicodeDecodeError:
+                with open(file_path, "r", encoding="latin-1") as f:
+                    content = f.read()
+            return content
+
+        loop = asyncio.get_event_loop()
+        content = await loop.run_in_executor(None, _read_code)
 
         if not content.strip():
             return "Fayl bo'sh."
@@ -208,41 +230,47 @@ async def analyze_zip(file_path: str) -> str:
         Archive contents description or error message
     """
     try:
-        text_parts = []
-        text_parts.append("--- ZIP arxiv tarkibi ---")
+        def _read_zip():
+            text_parts = []
+            text_parts.append("--- ZIP arxiv tarkibi ---")
 
-        with zipfile.ZipFile(file_path, "r") as zf:
-            file_list = zf.namelist()
-            text_parts.append(f"Jami fayllar soni: {len(file_list)}\n")
+            with zipfile.ZipFile(file_path, "r") as zf:
+                file_list = zf.namelist()
+                text_parts.append(f"Jami fayllar soni: {len(file_list)}\n")
 
-            # List all files
-            text_parts.append("Fayllar ro'yxati:")
-            for name in file_list[:50]:  # Show max 50 files
-                info = zf.getinfo(name)
-                size_kb = info.file_size / 1024
-                text_parts.append(f"  - {name} ({size_kb:.1f} KB)")
-
-            if len(file_list) > 50:
-                text_parts.append(f"  ... va yana {len(file_list) - 50} ta fayl")
-
-            # Try to read small text files from the archive
-            text_parts.append("\n--- Matn fayllarining mazmuni ---")
-            extracted_count = 0
-            for name in file_list:
-                if extracted_count >= 5:  # Limit to 5 files
-                    break
-                ext = Path(name).suffix.lower()
-                if ext in TEXT_EXTENSIONS and not name.endswith("/"):
+                # List all files
+                text_parts.append("Fayllar ro'yxati:")
+                for name in file_list[:50]:  # Show max 50 files
                     info = zf.getinfo(name)
-                    if info.file_size < 50000:  # Only files < 50KB
-                        try:
-                            content = zf.read(name).decode("utf-8", errors="replace")
-                            if content.strip():
-                                text_parts.append(f"\n--- {name} ---")
-                                text_parts.append(content[:3000])
-                                extracted_count += 1
-                        except Exception:
-                            pass
+                    size_kb = info.file_size / 1024
+                    text_parts.append(f"  - {name} ({size_kb:.1f} KB)")
+
+                if len(file_list) > 50:
+                    text_parts.append(f"  ... va yana {len(file_list) - 50} ta fayl")
+
+                # Try to read small text files from the archive
+                text_parts.append("\n--- Matn fayllarining mazmuni ---")
+                extracted_count = 0
+                for name in file_list:
+                    if extracted_count >= 5:  # Limit to 5 files
+                        break
+                    ext = Path(name).suffix.lower()
+                    if ext in TEXT_EXTENSIONS and not name.endswith("/"):
+                        info = zf.getinfo(name)
+                        if info.file_size < 50000:  # Only files < 50KB
+                            try:
+                                content = zf.read(name).decode("utf-8", errors="replace")
+                                if content.strip():
+                                    text_parts.append(f"\n--- {name} ---")
+                                    text_parts.append(content[:3000])
+                                    extracted_count += 1
+                            except Exception:
+                                pass
+
+            return text_parts
+
+        loop = asyncio.get_event_loop()
+        text_parts = await loop.run_in_executor(None, _read_zip)
 
         full_text = "\n".join(text_parts)
         return _truncate_text(full_text)

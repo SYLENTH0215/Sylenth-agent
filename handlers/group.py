@@ -21,6 +21,7 @@ from bot.downloader import (
     cleanup_file,
     extract_url,
 )
+from handlers.utils import _split_long_message, _format_duration, _build_music_keyboard
 
 logger = logging.getLogger(__name__)
 
@@ -32,66 +33,6 @@ _cached_bot_id: int = 0
 
 # Only handle group/supergroup messages
 router.message.filter(F.chat.type.in_({"group", "supergroup"}))
-
-
-def _split_long_message(text: str, max_length: int = 4096) -> list:
-    """Split a long message into chunks that fit Telegram's limit."""
-    if len(text) <= max_length:
-        return [text]
-
-    chunks = []
-    while text:
-        if len(text) <= max_length:
-            chunks.append(text)
-            break
-
-        split_pos = text.rfind("\n", 0, max_length)
-        if split_pos == -1:
-            split_pos = text.rfind(" ", 0, max_length)
-        if split_pos == -1:
-            split_pos = max_length
-
-        chunks.append(text[:split_pos])
-        text = text[split_pos:].lstrip()
-
-    return chunks
-
-
-def _format_duration(seconds: int) -> str:
-    """Format seconds into MM:SS string."""
-    if not seconds:
-        return ""
-    minutes = seconds // 60
-    secs = seconds % 60
-    return f"{minutes}:{secs:02d}"
-
-
-def _build_music_keyboard(music_results: list) -> InlineKeyboardMarkup:
-    """Build an InlineKeyboardMarkup with music results as buttons."""
-    buttons = []
-    for i, result in enumerate(music_results[:5], 1):
-        title = result.get("title", "Noma'lum")
-        artist = result.get("artist", "")
-        duration = _format_duration(result.get("duration", 0))
-        video_id = result.get("video_id", "")
-
-        btn_text = f"{i}. {title}"
-        if artist:
-            btn_text += f" - {artist}"
-        if duration:
-            btn_text += f" [{duration}]"
-
-        if len(btn_text) > 60:
-            btn_text = btn_text[:57] + "..."
-
-        buttons.append([
-            InlineKeyboardButton(
-                text=btn_text,
-                callback_data=f"music:{video_id}",
-            )
-        ])
-
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def _is_bot_mentioned(message: types.Message, bot_username: str) -> bool:

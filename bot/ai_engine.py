@@ -198,6 +198,17 @@ async def _execute_tool(tool_name: str, tool_args: dict) -> str:
         return json.dumps({"error": f"Tool bajarishda xatolik: {str(e)}"})
 
 
+# Maximum characters for tool results appended to the messages context
+MAX_TOOL_RESULT_LENGTH = 4000
+
+
+def _truncate_tool_result(result: str) -> str:
+    """Truncate tool result to prevent token budget exhaustion."""
+    if len(result) <= MAX_TOOL_RESULT_LENGTH:
+        return result
+    return result[:MAX_TOOL_RESULT_LENGTH] + "\n... [natija qisqartirildi]"
+
+
 async def _extract_and_save_facts(user_id: int, user_text: str, ai_response: str, user_name: str = "") -> None:
     """
     Try to extract facts about the user from the conversation and save them.
@@ -360,11 +371,11 @@ async def get_ai_response(user_id: int, user_text: str, user_name: str = "") -> 
                     except (json.JSONDecodeError, KeyError):
                         pass
 
-                # Add tool result to messages
+                # Add tool result to messages (truncated to prevent token overflow)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
-                    "content": tool_result,
+                    "content": _truncate_tool_result(tool_result),
                 })
 
             # Get next response from OpenAI with tool results

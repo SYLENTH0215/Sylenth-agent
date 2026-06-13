@@ -1,6 +1,7 @@
 """
 Command handlers for the Telegram bot.
-Handles /start, /help, /clear, /search, /music commands.
+Handles /start, /help, /clear commands.
+All other interactions (search, music) are handled by AI automatically.
 """
 
 import logging
@@ -9,8 +10,6 @@ from aiogram import Router, types
 from aiogram.filters import Command, CommandStart
 
 from database import get_or_create_user, clear_history
-from bot.search import search_web
-from bot.downloader import download_music, cleanup_file
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +35,13 @@ async def cmd_start(message: types.Message) -> None:
         "Men <b>Sylenth</b> - sizning aqlli yordamchingizman! 🤖\n\n"
         "Mening imkoniyatlarim:\n"
         "🧠 Savollaringizga javob beraman\n"
-        "🔍 Internetdan ma'lumot qidiraman\n"
-        "🎵 Musiqa topib beraman\n"
-        "📹 Video yuklab beraman\n"
+        "🔍 Internetdan ma'lumot qidiraman (shunchaki so'rang)\n"
+        "🎵 Musiqa topib beraman (qo'shiq nomini yozing)\n"
+        "📹 Video yuklab beraman (link yuboring)\n"
+        "📄 Fayllarni tahlil qilaman (PDF, DOCX, XLSX, kod, ZIP)\n"
         "💾 Suhbatimizni eslab qolaman\n\n"
-        "Menga istalgan savolingizni yuboring yoki "
-        "/help buyrug'ini bosib, barcha imkoniyatlarni ko'ring!"
+        "Hech qanday buyruq kerak emas - shunchaki yozing, "
+        "men hamma narsani avtomatik qilaman! 😊"
     )
 
     await message.answer(welcome_text)
@@ -49,23 +49,23 @@ async def cmd_start(message: types.Message) -> None:
 
 @router.message(Command("help"))
 async def cmd_help(message: types.Message) -> None:
-    """Handle /help command - show all features and commands."""
+    """Handle /help command - show all features."""
     help_text = (
         "📖 <b>Sylenth Bot - Yordam</b>\n\n"
         "<b>Buyruqlar:</b>\n"
         "/start - Botni ishga tushirish\n"
         "/help - Yordam (shu sahifa)\n"
-        "/clear - Suhbat tarixini tozalash\n"
-        "/search <so'rov> - Internetdan qidirish\n"
-        "/music <nomi> - Musiqa yuklab olish\n\n"
-        "<b>Imkoniyatlar:</b>\n"
+        "/clear - Suhbat tarixini tozalash\n\n"
+        "<b>Imkoniyatlar (avtomatik - buyruq kerak emas):</b>\n"
         "🧠 <b>AI Suhbat</b> - Istalgan savolingizni yozing\n"
-        "🔍 <b>Qidiruv</b> - /search so'zidan keyin so'rovni yozing\n"
-        "🎵 <b>Musiqa</b> - /music so'zidan keyin qo'shiq nomini yozing\n"
+        "🔍 <b>Qidiruv</b> - \"Internetdan ... haqida ma'lumot ber\" deb yozing\n"
+        "🎵 <b>Musiqa</b> - Qo'shiq nomini yoki \"... musiqasini top\" deb yozing\n"
         "📹 <b>Video</b> - YouTube, Instagram, TikTok, Facebook havolasini yuboring\n"
+        "📄 <b>Fayl tahlili</b> - PDF, DOCX, XLSX, kod yoki ZIP fayl yuboring\n"
         "💾 <b>Xotira</b> - Men sizni eslab qolaman va moslashaman\n"
         "👥 <b>Guruh</b> - Guruhda @mention yoki reply orqali murojaat qiling\n\n"
-        "<i>Menga oddiy matn yuboring - men javob beraman!</i>"
+        "<i>Menga oddiy matn yuboring - men avtomatik ravishda kerakli "
+        "amalni bajaraman!</i>"
     )
 
     await message.answer(help_text)
@@ -84,84 +84,3 @@ async def cmd_clear(message: types.Message) -> None:
         "Eslatma: Men siz haqingizda eslab qolgan ma'lumotlar saqlanadi. "
         "Yangi suhbatni boshlashingiz mumkin! 😊"
     )
-
-
-@router.message(Command("search"))
-async def cmd_search(message: types.Message) -> None:
-    """Handle /search command - web search using DuckDuckGo."""
-    if not message.text:
-        return
-
-    # Extract query after /search
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2 or not parts[1].strip():
-        await message.answer(
-            "🔍 Qidiruv uchun so'rov kiriting.\n"
-            "Masalan: /search Python dasturlash tili"
-        )
-        return
-
-    query = parts[1].strip()
-
-    # Show typing indicator
-    await message.answer_chat_action(action="typing")
-
-    # Perform search
-    results = await search_web(query)
-    await message.answer(results)
-
-
-@router.message(Command("music"))
-async def cmd_music(message: types.Message) -> None:
-    """Handle /music command - find and download music."""
-    if not message.text:
-        return
-
-    # Extract query after /music
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2 or not parts[1].strip():
-        await message.answer(
-            "🎵 Qo'shiq nomini kiriting.\n"
-            "Masalan: /music Imron - Aldangan qiz"
-        )
-        return
-
-    query = parts[1].strip()
-
-    # Show upload audio action
-    await message.answer_chat_action(action="upload_voice")
-    status_msg = await message.answer(f"🎵 Qidirilmoqda: <b>{query}</b>...")
-
-    try:
-        file_path, metadata = await download_music(query)
-
-        if file_path is None:
-            error_text = metadata.get("error", "Musiqa topilmadi.")
-            await status_msg.edit_text(f"❌ {error_text}")
-            return
-
-        # Send audio file
-        title = metadata.get("title", query)
-        artist = metadata.get("artist", "")
-        duration = metadata.get("duration", 0)
-
-        await message.answer_chat_action(action="upload_voice")
-
-        audio_file = types.FSInputFile(file_path, filename=f"{title}.mp3")
-        await message.answer_audio(
-            audio=audio_file,
-            title=title,
-            performer=artist,
-            duration=int(duration) if duration else None,
-            caption=f"🎵 {title}",
-        )
-
-        # Clean up status message and file
-        await status_msg.delete()
-        cleanup_file(file_path)
-
-    except Exception as e:
-        logger.error(f"Music command error: {e}")
-        await status_msg.edit_text(
-            "❌ Musiqa yuklashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
-        )

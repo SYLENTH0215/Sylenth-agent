@@ -1,21 +1,23 @@
 """
 Group message handler.
 Only responds when the bot is mentioned (@username) or replied to.
-Auto-detects video URLs and music requests in groups without requiring @mention.
+Auto-detects video URLs in groups without requiring @mention.
+AI-driven responses with function calling for search and music.
 """
 
 import logging
+import re
 
 from aiogram import Router, types, F, Bot
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from database import get_or_create_user
 from bot.ai_engine import get_ai_response
 from bot.safety import is_safe
 from bot.downloader import (
     is_video_url,
-    is_music_request,
     download_video,
-    download_music,
+    download_music_by_url,
     cleanup_file,
     extract_url,
 )
@@ -55,6 +57,43 @@ def _split_long_message(text: str, max_length: int = 4096) -> list:
     return chunks
 
 
+def _format_duration(seconds: int) -> str:
+    """Format seconds into MM:SS string."""
+    if not seconds:
+        return ""
+    minutes = seconds // 60
+    secs = seconds % 60
+    return f"{minutes}:{secs:02d}"
+
+
+def _build_music_keyboard(music_results: list) -> InlineKeyboardMarkup:
+    """Build an InlineKeyboardMarkup with music results as buttons."""
+    buttons = []
+    for i, result in enumerate(music_results[:5], 1):
+        title = result.get("title", "Noma'lum")
+        artist = result.get("artist", "")
+        duration = _format_duration(result.get("duration", 0))
+        video_id = result.get("video_id", "")
+
+        btn_text = f"{i}. {title}"
+        if artist:
+            btn_text += f" - {artist}"
+        if duration:
+            btn_text += f" [{duration}]"
+
+        if len(btn_text) > 60:
+            btn_text = btn_text[:57] + "..."
+
+        buttons.append([
+            InlineKeyboardButton(
+                text=btn_text,
+                callback_data=f"music:{video_id}",
+            )
+        ])
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def _is_bot_mentioned(message: types.Message, bot_username: str) -> bool:
     """Check if the bot is mentioned in the message."""
     if not message.text:
@@ -84,7 +123,6 @@ def _is_reply_to_bot(message: types.Message, bot_id: int) -> bool:
 
 def _clean_mention(text: str, bot_username: str) -> str:
     """Remove bot mention from the text."""
-    import re
     cleaned = re.sub(
         rf"@{re.escape(bot_username)}\s*",
         "",
@@ -98,8 +136,8 @@ def _clean_mention(text: str, bot_username: str) -> str:
 async def handle_group_message(message: types.Message, bot: Bot) -> None:
     """
     Handle group messages.
-    Auto-detects video URLs and music requests (no @mention needed for these).
-    For regular AI chat, only responds when bot is mentioned or message is a reply to bot.
+    Auto-detects video URLs (no @mention needed).
+    For AI chat (including music search), requires @mention or reply to bot.
     """
     global _cached_bot_username, _cached_bot_id
 
@@ -109,7 +147,7 @@ async def handle_group_message(message: types.Message, bot: Bot) -> None:
     if not user or not text:
         return
 
-    # Cache bot info on first call to avoid repeated API calls
+    # Cache bot info on first call
     if not _cached_bot_username:
         bot_info = await bot.get_me()
         _cached_bot_username = bot_info.username or ""
@@ -132,12 +170,7 @@ async def handle_group_message(message: types.Message, bot: Bot) -> None:
             await _handle_group_video(message, url)
             return
 
-    # AUTO-DETECT: Music requests (no @mention needed)
-    if is_music_request(text):
-        await _handle_group_music(message, text)
-        return
-
-    # For regular AI chat, require @mention or reply to bot
+    # For AI chat, require @mention or reply to bot
     mentioned = _is_bot_mentioned(message, bot_username)
     replied_to_bot = _is_reply_to_bot(message, bot_id)
 
@@ -171,13 +204,37 @@ async def handle_group_message(message: types.Message, bot: Bot) -> None:
             user_name=user.first_name or user.full_name or "",
         )
 
-        # Split and send response
-        chunks = _split_long_message(response)
-        for i, chunk in enumerate(chunks):
-            if i == 0:
-                await message.reply(chunk)
+        response_type = response.get("type", "text")
+        content = response.get("content", "")
+        music_results = response.get("music_results")
+
+        if response_type == "music_results" and music_results:
+            # Show music results as inline keyboard buttons
+            keyboard = _build_music_keyboard(music_results)
+
+            if content:
+                chunks = _split_long_message(content)
+                for chunk in chunks[:-1]:
+                    await message.reply(chunk)
+                await message.reply(chunks[-1], reply_markup=keyboard)
             else:
-                await message.answer(chunk)
+                await message.reply(
+                    "🎵 Quyidagi natijalardan birini tanlang:",
+                    reply_markup=keyboard,
+                )
+        else:
+            # Regular text response
+            if content:
+                chunks = _split_long_message(content)
+                for i, chunk in enumerate(chunks):
+                    if i == 0:
+                        await message.reply(chunk)
+                    else:
+                        await message.answer(chunk)
+            else:
+                await message.reply(
+                    "Kechirasiz, javob olishda xatolik yuz berdi. 🔄"
+                )
 
     except Exception as e:
         logger.error(f"Group message handler error: {e}")
@@ -188,21 +245,21 @@ async def handle_group_message(message: types.Message, bot: Bot) -> None:
 
 async def _handle_group_video(message: types.Message, url: str) -> None:
     """Handle a video URL in a group - download and send."""
-    status_msg = await message.reply("\ud83d\udcf9 Video yuklanmoqda... \u23f3")
+    status_msg = await message.reply("📹 Video yuklanmoqda... ⏳")
 
     try:
         await message.answer_chat_action(action="upload_video")
         file_path, title = await download_video(url)
 
         if file_path is None:
-            await status_msg.edit_text(f"\u274c {title}")
+            await status_msg.edit_text(f"❌ {title}")
             return
 
         try:
             video_file = types.FSInputFile(file_path, filename=f"{title}.mp4")
             await message.answer_video(
                 video=video_file,
-                caption=f"\ud83d\udcf9 {title}",
+                caption=f"📹 {title}",
             )
             await status_msg.delete()
         finally:
@@ -211,39 +268,48 @@ async def _handle_group_video(message: types.Message, url: str) -> None:
     except Exception as e:
         logger.error(f"Group video handler error: {e}")
         await status_msg.edit_text(
-            "\u274c Video yuklashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
+            "❌ Video yuklashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
         )
 
 
-async def _handle_group_music(message: types.Message, text: str) -> None:
-    """Handle a music request in a group - search and download."""
-    # Remove music keywords from query for cleaner search
-    clean_query = text
-    music_words = [
-        "musiqa", "qo'shiq", "qoshiq", "music", "song", "mp3",
-        "kuylash", "kuy", "topib ber", "qo'shig'ini", "qoshigini",
-        "ashula", "pesnya", "muzika", "mahnisi", "aytib ber",
-        "topib", "ber", "yuklab", "qo'y",
-    ]
-    for word in music_words:
-        clean_query = clean_query.lower().replace(word, "")
-    clean_query = clean_query.strip()
+@router.callback_query(F.data.startswith("music:"))
+async def handle_group_music_callback(callback: types.CallbackQuery) -> None:
+    """
+    Handle music selection callback in groups.
+    Downloads the selected track and sends it as audio.
+    """
+    user = callback.from_user
+    if not user or not callback.data:
+        return
 
-    if not clean_query:
-        clean_query = text
+    # Extract video_id from callback data
+    video_id = callback.data.replace("music:", "")
+    if not video_id:
+        await callback.answer("Xatolik: video ID topilmadi.", show_alert=True)
+        return
 
-    status_msg = await message.reply(f"\ud83c\udfb5 Qidirilmoqda: <b>{clean_query}</b>... \u23f3")
+    # Acknowledge the callback
+    await callback.answer("🎵 Yuklanmoqda...")
+
+    # Build YouTube URL from video_id
+    url = f"https://www.youtube.com/watch?v={video_id}"
+
+    message = callback.message
+    if not message:
+        return
+
+    status_msg = await message.answer("🎵 Musiqa yuklanmoqda... ⏳")
 
     try:
         await message.answer_chat_action(action="upload_voice")
-        file_path, metadata = await download_music(clean_query)
+        file_path, metadata = await download_music_by_url(url)
 
         if file_path is None:
-            error_text = metadata.get("error", "Musiqa topilmadi.")
-            await status_msg.edit_text(f"\u274c {error_text}")
+            error_text = metadata.get("error", "Musiqa yuklab olinmadi.")
+            await status_msg.edit_text(f"❌ {error_text}")
             return
 
-        title = metadata.get("title", clean_query)
+        title = metadata.get("title", "Musiqa")
         artist = metadata.get("artist", "")
         duration = metadata.get("duration", 0)
 
@@ -254,14 +320,14 @@ async def _handle_group_music(message: types.Message, text: str) -> None:
                 title=title,
                 performer=artist,
                 duration=int(duration) if duration else None,
-                caption=f"\ud83c\udfb5 {title}",
+                caption=f"🎵 {title}",
             )
             await status_msg.delete()
         finally:
             cleanup_file(file_path)
 
     except Exception as e:
-        logger.error(f"Group music handler error: {e}")
+        logger.error(f"Group music callback handler error: {e}")
         await status_msg.edit_text(
-            "\u274c Musiqa yuklashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
+            "❌ Musiqa yuklashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
         )

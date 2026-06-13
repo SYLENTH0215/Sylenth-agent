@@ -195,6 +195,69 @@ async def download_video(url: str) -> Tuple[Optional[str], str]:
             return None, "Video yuklashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
 
 
+async def search_music(query: str, max_results: int = 5) -> list:
+    """
+    Search YouTube for music and return a list of results WITHOUT downloading.
+    Used to show inline keyboard buttons for user selection.
+
+    Args:
+        query: Music search query (song name, artist, etc.)
+        max_results: Maximum number of results to return (default: 5)
+
+    Returns:
+        List of dicts: [{title, artist, duration, video_id, url}]
+        Returns empty list on failure.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+
+        def _search():
+            ydl_opts = {
+                "quiet": True,
+                "no_warnings": True,
+                "extract_flat": True,
+                "default_search": f"ytsearch{max_results}",
+                "socket_timeout": 15,
+            }
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(f"ytsearch{max_results}:{query}", download=False)
+
+                if info is None:
+                    return []
+
+                entries = info.get("entries", [])
+                if not entries:
+                    return []
+
+                results = []
+                for entry in entries:
+                    if entry is None:
+                        continue
+                    video_id = entry.get("id", "")
+                    title = entry.get("title", "Noma'lum")
+                    artist = entry.get("uploader", entry.get("channel", ""))
+                    duration = entry.get("duration", 0)
+                    url = entry.get("url", f"https://www.youtube.com/watch?v={video_id}")
+
+                    results.append({
+                        "title": title,
+                        "artist": artist,
+                        "duration": duration or 0,
+                        "video_id": video_id,
+                        "url": url,
+                    })
+
+                return results
+
+        results = await loop.run_in_executor(None, _search)
+        return results
+
+    except Exception as e:
+        logger.error(f"Music search error for query '{query}': {e}")
+        return []
+
+
 async def download_music(query: str) -> Tuple[Optional[str], dict]:
     """
     Search YouTube for music and download as MP3.
@@ -280,6 +343,82 @@ async def download_music(query: str) -> Tuple[Optional[str], dict]:
     except Exception as e:
         logger.error(f"Music download error for query '{query}': {e}")
         return None, {"error": "Musiqa yuklashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."}
+
+
+async def download_music_by_url(url: str) -> Tuple[Optional[str], dict]:
+    """
+    Download music from a specific YouTube URL as MP3.
+
+    Args:
+        url: YouTube video URL
+
+    Returns:
+        Tuple of (file_path, metadata_dict) on success,
+        or (None, error_dict) on failure
+    """
+    _ensure_downloads_dir()
+
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "outtmpl": os.path.join(DOWNLOADS_DIR, "%(id)s.%(ext)s"),
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "socket_timeout": 30,
+        "retries": 3,
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "192",
+        }],
+    }
+
+    try:
+        loop = asyncio.get_event_loop()
+
+        def _download():
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+
+                if info is None:
+                    return None, {"error": "Musiqa topilmadi."}
+
+                title = info.get("title", "Unknown")
+                artist = info.get("uploader", info.get("artist", "Unknown"))
+                duration = info.get("duration", 0)
+
+                video_id = info.get("id", "unknown")
+                filename = os.path.join(DOWNLOADS_DIR, f"{video_id}.mp3")
+
+                if not os.path.exists(filename):
+                    base = os.path.join(DOWNLOADS_DIR, video_id)
+                    for ext in [".mp3", ".m4a", ".webm", ".opus"]:
+                        if os.path.exists(base + ext):
+                            filename = base + ext
+                            break
+
+                if not os.path.exists(filename):
+                    return None, {"error": "Musiqa yuklab olinmadi."}
+
+                file_size_mb = os.path.getsize(filename) / (1024 * 1024)
+                if file_size_mb > MAX_FILE_SIZE_MB:
+                    os.remove(filename)
+                    return None, {"error": f"Fayl hajmi juda katta ({file_size_mb:.1f} MB)."}
+
+                metadata = {
+                    "title": title,
+                    "artist": artist,
+                    "duration": duration,
+                }
+
+                return filename, metadata
+
+        result = await loop.run_in_executor(None, _download)
+        return result
+
+    except Exception as e:
+        logger.error(f"Music download error for URL '{url}': {e}")
+        return None, {"error": "Musiqa yuklashda xatolik yuz berdi."}
 
 
 def cleanup_file(path: str) -> None:

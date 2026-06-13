@@ -1,10 +1,12 @@
 """
-OpenAI integration module with personality and per-user memory.
-Handles AI response generation with safety filtering and fact extraction.
+OpenAI integration module with function calling (tools) and per-user memory.
+AI decides when to search web, find music, or analyze information.
+Returns structured responses for handlers to display appropriately.
 """
 
 import json
 import logging
+import re
 from typing import Optional
 
 from openai import AsyncOpenAI
@@ -19,7 +21,7 @@ logger = logging.getLogger(__name__)
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # ============================================================================
-# SYSTEM PROMPT - Defines Sylenth's personality
+# SYSTEM PROMPT - Defines Sylenth's personality and tool usage instructions
 # ============================================================================
 
 SYSTEM_PROMPT = """Sen - Sylenth, aqlli, hazilkash va samimiy sun'iy intellekt yordamchisisan.
@@ -44,15 +46,69 @@ XOTIRA:
 - Suhbat davomida foydalanuvchini yaxshiroq tushunib borasan.
 - Foydalanuvchi haqidagi faktlardan suhbatda foydalanasan.
 
+TOOL FOYDALANISH QOIDALARI:
+- Agar foydalanuvchi internetdan biror ma'lumot so'rasa yoki biror haqiqiy fakt haqida so'rasa - ALBATTA search_web toolini chaqir.
+- Agar foydalanuvchi musiqa, qo'shiq, ashula topishni so'rasa yoki biror qo'shiq nomini aytsa - search_music toolini chaqir.
+- Internetdan olingan ma'lumotni diqqat bilan tahlil qil, faqat ishonchli va tasdiqlangan faktlarni ber.
+- Noto'g'ri va xato ma'lumot berish MUTLAQO taqiqlanadi - faqat real va aniq faktlarga asoslangan ma'lumot ber.
+- Agar ma'lumotning to'g'riligi shubhali bo'lsa, foydalanuvchiga buni ochiq ayt.
+
 IMKONIYATLARING:
 - Savollarla javob berish (AI suhbat)
-- Internetdan ma'lumot qidirish (/search buyrug'i bilan)
-- Musiqa topib berish (/music buyrug'i bilan)
-- Video yuklab berish (link yuborish orqali)
+- Internetdan ma'lumot qidirish (search_web tooli orqali avtomatik)
+- Musiqa topib berish (search_music tooli orqali avtomatik)
+- Video yuklab berish (link yuborish orqali - avtomatik aniqlanadi)
+- Fayllarni tahlil qilish (PDF, DOCX, XLSX, kod fayllar, ZIP)
 - Suhbat tarixini tozalash (/clear buyrug'i bilan)
+
+MUHIM: Foydalanuvchiga buyruqlar haqida gapirma. Sen hamma narsani avtomatik qilasan - foydalanuvchi shunchaki yozadi, sen esa kerakli amallarni bajarasan.
 """
 
-# Message shown when content is rejected
+# ============================================================================
+# OpenAI Tools (Function Calling) Definitions
+# ============================================================================
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_web",
+            "description": "Internetdan ma'lumot qidirish. Foydalanuvchi biror haqiqiy fakt, yangilik, ma'lumot so'raganda ishlatiladi.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Qidiruv so'rovi (ingliz yoki o'zbek tilida)"
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_music",
+            "description": "Musiqa/qo'shiq qidirish. Foydalanuvchi biror qo'shiq, musiqa yoki ashula topishni so'raganda ishlatiladi.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Musiqa qidiruv so'rovi (qo'shiq nomi, artist, albom)"
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    },
+]
+
+# ============================================================================
+# Response Messages
+# ============================================================================
+
 SAFETY_REJECTION_UZ = (
     "Kechirasiz, men bu mavzuda yordam bera olmayman. "
     "Iltimos, boshqa savol bering - men sizga foydali va xavfsiz "
@@ -108,6 +164,40 @@ def _build_messages(
     return messages
 
 
+async def _execute_tool(tool_name: str, tool_args: dict) -> str:
+    """
+    Execute a tool call and return the result as a string.
+
+    Args:
+        tool_name: Name of the tool to execute
+        tool_args: Arguments for the tool
+
+    Returns:
+        Tool execution result as string
+    """
+    try:
+        if tool_name == "search_web":
+            from bot.search import search_web
+            query = tool_args.get("query", "")
+            result = await search_web(query)
+            return result
+
+        elif tool_name == "search_music":
+            from bot.downloader import search_music
+            query = tool_args.get("query", "")
+            results = await search_music(query, max_results=5)
+            if not results:
+                return json.dumps({"found": False, "message": "Hech qanday musiqa topilmadi."})
+            return json.dumps({"found": True, "results": results}, ensure_ascii=False)
+
+        else:
+            return json.dumps({"error": f"Noma'lum tool: {tool_name}"})
+
+    except Exception as e:
+        logger.error(f"Tool execution error ({tool_name}): {e}")
+        return json.dumps({"error": f"Tool bajarishda xatolik: {str(e)}"})
+
+
 async def _extract_and_save_facts(user_id: int, user_text: str, ai_response: str, user_name: str = "") -> None:
     """
     Try to extract facts about the user from the conversation and save them.
@@ -120,17 +210,6 @@ async def _extract_and_save_facts(user_id: int, user_text: str, ai_response: str
         if user_name and user_name.strip():
             await save_user_memory(user_id, "ism", user_name)
 
-        # Simple pattern matching for common facts
-        fact_patterns = {
-            "mening ismim": "ism",
-            "meni ... deb chaqiring": "ism",
-            "men ... da yashayman": "yashash_joyi",
-            "men ... da ishlayman": "ish_joyi",
-            "men ... ni yaxshi ko'raman": "sevimli_narsa",
-            "mening yoshim": "yosh",
-            "menga ... yoqadi": "qiziqish",
-        }
-
         # Check for name patterns
         name_patterns = [
             r"mening ismim\s+(\w+)",
@@ -138,7 +217,6 @@ async def _extract_and_save_facts(user_id: int, user_text: str, ai_response: str
             r"men\s+(\w+)\s*man$",
             r"meni\s+(\w+)\s*deb\s*(chaqir|ata)",
         ]
-        import re
         for pattern in name_patterns:
             match = re.search(pattern, text_lower)
             if match:
@@ -177,9 +255,10 @@ async def _extract_and_save_facts(user_id: int, user_text: str, ai_response: str
         logger.debug(f"Fact extraction error (non-critical): {e}")
 
 
-async def get_ai_response(user_id: int, user_text: str, user_name: str = "") -> str:
+async def get_ai_response(user_id: int, user_text: str, user_name: str = "") -> dict:
     """
-    Generate an AI response for the user's message.
+    Generate an AI response for the user's message using OpenAI function calling.
+    AI decides when to use tools (search_web, search_music).
 
     Args:
         user_id: Telegram user ID
@@ -187,16 +266,20 @@ async def get_ai_response(user_id: int, user_text: str, user_name: str = "") -> 
         user_name: The user's display name (optional)
 
     Returns:
-        AI response text or error/safety message
+        Structured dict: {
+            "type": "text" | "music_results" | "error",
+            "content": str,
+            "music_results": list | None
+        }
     """
     try:
         # Check for prompt injection
         if is_prompt_injection(user_text):
-            return SAFETY_INJECTION_UZ
+            return {"type": "text", "content": SAFETY_INJECTION_UZ, "music_results": None}
 
         # Check safety filter on input
         if not is_safe(user_text):
-            return SAFETY_REJECTION_UZ
+            return {"type": "text", "content": SAFETY_REJECTION_UZ, "music_results": None}
 
         # Get conversation history
         history = await get_conversation_history(user_id, limit=HISTORY_LIMIT)
@@ -221,19 +304,88 @@ async def get_ai_response(user_id: int, user_text: str, user_name: str = "") -> 
             user_name=user_name,
         )
 
-        # Call OpenAI API
+        # Call OpenAI API with tools
         response = await client.chat.completions.create(
             model=OPENAI_MODEL,
             messages=messages,
             max_tokens=MAX_TOKENS,
             temperature=TEMPERATURE,
+            tools=TOOLS,
+            tool_choice="auto",
         )
 
-        ai_text = response.choices[0].message.content or ""
+        response_message = response.choices[0].message
+        music_results = None
+
+        # Handle tool calls (function calling loop)
+        max_iterations = 3
+        iteration = 0
+
+        while response_message.tool_calls and iteration < max_iterations:
+            iteration += 1
+
+            # Add assistant message with tool calls to messages
+            messages.append({
+                "role": "assistant",
+                "content": response_message.content or "",
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        }
+                    }
+                    for tc in response_message.tool_calls
+                ],
+            })
+
+            # Execute each tool call
+            for tool_call in response_message.tool_calls:
+                tool_name = tool_call.function.name
+                try:
+                    tool_args = json.loads(tool_call.function.arguments)
+                except json.JSONDecodeError:
+                    tool_args = {}
+
+                tool_result = await _execute_tool(tool_name, tool_args)
+
+                # Check if this is a music search with results
+                if tool_name == "search_music":
+                    try:
+                        parsed = json.loads(tool_result)
+                        if parsed.get("found") and parsed.get("results"):
+                            music_results = parsed["results"]
+                    except (json.JSONDecodeError, KeyError):
+                        pass
+
+                # Add tool result to messages
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": tool_result,
+                })
+
+            # Get next response from OpenAI with tool results
+            response = await client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=messages,
+                max_tokens=MAX_TOKENS,
+                temperature=TEMPERATURE,
+                tools=TOOLS,
+                tool_choice="auto",
+            )
+
+            response_message = response.choices[0].message
+
+        # Extract final AI text
+        ai_text = response_message.content or ""
 
         # Check safety filter on AI response
         if not is_safe(ai_text):
             ai_text = SAFETY_REJECTION_UZ
+            music_results = None
 
         # Save messages to database
         await save_message(user_id, "user", user_text)
@@ -242,8 +394,20 @@ async def get_ai_response(user_id: int, user_text: str, user_name: str = "") -> 
         # Try to extract and save facts about the user
         await _extract_and_save_facts(user_id, user_text, ai_text, user_name)
 
-        return ai_text
+        # Determine response type
+        if music_results:
+            return {
+                "type": "music_results",
+                "content": ai_text,
+                "music_results": music_results,
+            }
+        else:
+            return {
+                "type": "text",
+                "content": ai_text,
+                "music_results": None,
+            }
 
     except Exception as e:
         logger.error(f"AI response error for user {user_id}: {e}")
-        return ERROR_MESSAGE_UZ
+        return {"type": "error", "content": ERROR_MESSAGE_UZ, "music_results": None}

@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 
 router = Router(name="group")
 
+# Cached bot info to avoid calling bot.get_me() on every message
+_cached_bot_username: str = ""
+_cached_bot_id: int = 0
+
 # Only handle group/supergroup messages
 router.message.filter(F.chat.type.in_({"group", "supergroup"}))
 
@@ -87,16 +91,22 @@ async def handle_group_message(message: types.Message, bot: Bot) -> None:
     Handle group messages.
     Only responds when bot is mentioned or message is a reply to bot.
     """
+    global _cached_bot_username, _cached_bot_id
+
     user = message.from_user
     text = message.text
 
     if not user or not text:
         return
 
-    # Get bot info
-    bot_info = await bot.get_me()
-    bot_username = bot_info.username or ""
-    bot_id = bot_info.id
+    # Cache bot info on first call to avoid repeated API calls
+    if not _cached_bot_username:
+        bot_info = await bot.get_me()
+        _cached_bot_username = bot_info.username or ""
+        _cached_bot_id = bot_info.id
+
+    bot_username = _cached_bot_username
+    bot_id = _cached_bot_id
 
     # Check if we should respond
     mentioned = _is_bot_mentioned(message, bot_username)

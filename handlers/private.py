@@ -16,7 +16,7 @@ from bot.downloader import (
     download_video,
     download_music,
     cleanup_file,
-    _extract_url,
+    extract_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,29 +55,30 @@ def _split_long_message(text: str, max_length: int = 4096) -> list:
 
 async def _handle_video_url(message: types.Message, url: str) -> None:
     """Handle a video URL - download and send."""
-    status_msg = await message.answer("📹 Video yuklanmoqda... ⏳")
+    status_msg = await message.answer("\ud83d\udcf9 Video yuklanmoqda... \u23f3")
 
     try:
         await message.answer_chat_action(action="upload_video")
         file_path, title = await download_video(url)
 
         if file_path is None:
-            await status_msg.edit_text(f"❌ {title}")
+            await status_msg.edit_text(f"\u274c {title}")
             return
 
-        video_file = types.FSInputFile(file_path, filename=f"{title}.mp4")
-        await message.answer_video(
-            video=video_file,
-            caption=f"📹 {title}",
-        )
-
-        await status_msg.delete()
-        cleanup_file(file_path)
+        try:
+            video_file = types.FSInputFile(file_path, filename=f"{title}.mp4")
+            await message.answer_video(
+                video=video_file,
+                caption=f"\ud83d\udcf9 {title}",
+            )
+            await status_msg.delete()
+        finally:
+            cleanup_file(file_path)
 
     except Exception as e:
         logger.error(f"Video handler error: {e}")
         await status_msg.edit_text(
-            "❌ Video yuklashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
+            "\u274c Video yuklashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
         )
 
 
@@ -99,7 +100,7 @@ async def _handle_music_request(message: types.Message, query: str) -> None:
         # If nothing left after removing keywords, use original
         clean_query = query
 
-    status_msg = await message.answer(f"🎵 Qidirilmoqda: <b>{clean_query}</b>... ⏳")
+    status_msg = await message.answer(f"\ud83c\udfb5 Qidirilmoqda: <b>{clean_query}</b>... \u23f3")
 
     try:
         await message.answer_chat_action(action="upload_voice")
@@ -107,29 +108,30 @@ async def _handle_music_request(message: types.Message, query: str) -> None:
 
         if file_path is None:
             error_text = metadata.get("error", "Musiqa topilmadi.")
-            await status_msg.edit_text(f"❌ {error_text}")
+            await status_msg.edit_text(f"\u274c {error_text}")
             return
 
         title = metadata.get("title", clean_query)
         artist = metadata.get("artist", "")
         duration = metadata.get("duration", 0)
 
-        audio_file = types.FSInputFile(file_path, filename=f"{title}.mp3")
-        await message.answer_audio(
-            audio=audio_file,
-            title=title,
-            performer=artist,
-            duration=int(duration) if duration else None,
-            caption=f"🎵 {title}",
-        )
-
-        await status_msg.delete()
-        cleanup_file(file_path)
+        try:
+            audio_file = types.FSInputFile(file_path, filename=f"{title}.mp3")
+            await message.answer_audio(
+                audio=audio_file,
+                title=title,
+                performer=artist,
+                duration=int(duration) if duration else None,
+                caption=f"\ud83c\udfb5 {title}",
+            )
+            await status_msg.delete()
+        finally:
+            cleanup_file(file_path)
 
     except Exception as e:
         logger.error(f"Music handler error: {e}")
         await status_msg.edit_text(
-            "❌ Musiqa yuklashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
+            "\u274c Musiqa yuklashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
         )
 
 
@@ -157,7 +159,7 @@ async def handle_private_message(message: types.Message) -> None:
 
     # 1. Check for video URL
     if is_video_url(text):
-        url = _extract_url(text)
+        url = extract_url(text)
         if url:
             await _handle_video_url(message, url)
             return

@@ -79,14 +79,11 @@ async def main() -> None:
 
     # Start polling
     logger.info("Starting bot polling...")
-    try:
-        await dp.start_polling(
-            bot,
-            allowed_updates=["message", "callback_query"],
-            drop_pending_updates=True,
-        )
-    finally:
-        await bot.session.close()
+    await dp.start_polling(
+        bot,
+        allowed_updates=["message", "callback_query"],
+        drop_pending_updates=True,
+    )
 
 
 if __name__ == "__main__":

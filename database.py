@@ -114,6 +114,7 @@ async def get_or_create_user(
 async def save_message(user_id: int, role: str, content: str) -> None:
     """
     Save a message to conversation history.
+    Triggers pruning every 10th message to keep the table bounded.
     
     Args:
         user_id: Telegram user ID
@@ -125,6 +126,47 @@ async def save_message(user_id: int, role: str, content: str) -> None:
             """INSERT INTO conversations (user_id, role, content, created_at)
                VALUES (?, ?, ?, ?)""",
             (user_id, role, content, datetime.now().isoformat()),
+        )
+        await db.commit()
+
+        # Check message count and prune every 10th message
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM conversations WHERE user_id = ?",
+            (user_id,),
+        )
+        count = (await cursor.fetchone())[0]
+        if count > 0 and count % 10 == 0:
+            await prune_old_conversations(user_id)
+
+
+async def prune_old_conversations(user_id: int, keep_limit: int = 200) -> None:
+    """
+    Delete messages beyond the keep_limit for a user, keeping only the most recent ones.
+    
+    Args:
+        user_id: Telegram user ID
+        keep_limit: Maximum number of messages to keep (default: 200)
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Count total messages for this user
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM conversations WHERE user_id = ?",
+            (user_id,),
+        )
+        total = (await cursor.fetchone())[0]
+
+        if total <= keep_limit:
+            return
+
+        # Delete the oldest messages beyond keep_limit
+        await db.execute(
+            """DELETE FROM conversations WHERE id IN (
+                SELECT id FROM conversations
+                WHERE user_id = ?
+                ORDER BY created_at ASC
+                LIMIT ?
+            )""",
+            (user_id, total - keep_limit),
         )
         await db.commit()
 

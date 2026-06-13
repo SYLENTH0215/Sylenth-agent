@@ -84,7 +84,7 @@ def is_music_request(text: str) -> bool:
     return False
 
 
-def _extract_url(text: str) -> Optional[str]:
+def extract_url(text: str) -> Optional[str]:
     """Extract the first URL from text."""
     url_pattern = re.compile(
         r'https?://[^\s<>"{}|\\^`\[\]]+',

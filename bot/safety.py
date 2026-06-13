@@ -62,7 +62,7 @@ _BANNED_WORDS_DRUGS: List[str] = [
     "наркоман", "дурь", "косяк", "травка",
     # Uzbek
     "kokain", "geroin", "narkotik", "giyohvand", "nasha",
-    "gashish", "ekstazi", "amfetamin", "giyoh", "dori",
+    "gashish", "ekstazi", "amfetamin", "giyoh",
     "giyohvandlik",
 ]
 
@@ -101,6 +101,18 @@ _ALL_BANNED: List[str] = (
     + _BANNED_WORDS_TERRORISM
     + _BANNED_WORDS_HATE
 )
+
+# Short words (3 chars or less) need word-boundary matching to avoid false positives
+_SHORT_WORD_THRESHOLD = 3
+_SHORT_BANNED_PATTERNS = [
+    re.compile(r'\b' + re.escape(word.lower()) + r'\b', re.IGNORECASE)
+    for word in _ALL_BANNED
+    if len(word) <= _SHORT_WORD_THRESHOLD
+]
+_LONG_BANNED_WORDS = [
+    word.lower() for word in _ALL_BANNED
+    if len(word) > _SHORT_WORD_THRESHOLD
+]
 
 # ============================================================================
 # CHARACTER SUBSTITUTION MAP for detecting bypass attempts
@@ -221,17 +233,23 @@ def is_safe(text: str) -> bool:
     lower_text = text.lower()
     lower_no_special = re.sub(r'[^\w\s]', '', lower_text)
 
-    # Check each banned word/phrase
-    for word in _ALL_BANNED:
-        word_lower = word.lower()
+    # Check short banned words using word-boundary patterns (avoids false positives)
+    for pattern in _SHORT_BANNED_PATTERNS:
+        if pattern.search(text):
+            return False
+        if pattern.search(lower_no_special):
+            return False
+
+    # Check long banned words/phrases using substring matching
+    for word in _LONG_BANNED_WORDS:
         # Check in normalized (collapsed) text
-        if word_lower in normalized:
+        if word in normalized:
             return False
         # Check in lowercase original (for multi-word phrases)
-        if word_lower in lower_text:
+        if word in lower_text:
             return False
         # Check without special characters
-        if word_lower in lower_no_special:
+        if word in lower_no_special:
             return False
 
     return True

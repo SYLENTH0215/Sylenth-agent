@@ -77,8 +77,7 @@ async def cmd_music(message: types.Message):
 
 @router.message(Command("ban"))
 async def cmd_ban(message: types.Message):
-    # ADMIN_ID ni xavfsiz int turiga o'giramiz
-    if int(message.from_user.id) != int(ADMIN_ID):
+    if message.from_user.id != ADMIN_ID:
         return
     parts = message.text.split()
     if len(parts) < 2:
@@ -91,7 +90,7 @@ async def cmd_ban(message: types.Message):
 
 @router.message(Command("unban"))
 async def cmd_unban(message: types.Message):
-    if int(message.from_user.id) != int(ADMIN_ID):
+    if message.from_user.id != ADMIN_ID:
         return
     parts = message.text.split()
     if len(parts) < 2:
@@ -104,7 +103,7 @@ async def cmd_unban(message: types.Message):
 
 @router.message(Command("ceo"))
 async def cmd_ceo(message: types.Message):
-    if int(message.from_user.id) != int(ADMIN_ID):
+    if message.from_user.id != ADMIN_ID:
         return
     from keyboards import ceo_panel
     await message.answer("🛡 <b>CEO Boshqaruv Paneli</b>", reply_markup=ceo_panel(), parse_mode="HTML")

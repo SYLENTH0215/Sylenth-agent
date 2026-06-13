@@ -9,7 +9,11 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 if not BOT_TOKEN:
     raise ValueError("❌ BOT_TOKEN muhim! .env faylida o'rnatish kerak")
 
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+try:
+    ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+except ValueError:
+    raise ValueError("❌ ADMIN_ID noto'g'ri formatda! Faqat raqam bo'lishi kerak.")
+
 REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "")
 
 

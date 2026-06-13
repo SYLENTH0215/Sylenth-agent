@@ -50,6 +50,7 @@ def _ensure_downloads_dir() -> None:
 def is_video_url(text: str) -> bool:
     """
     Check if the text contains a supported video platform URL.
+    Works with and without https:// prefix.
 
     Args:
         text: Message text to check
@@ -62,6 +63,19 @@ def is_video_url(text: str) -> bool:
     for pattern in _VIDEO_PATTERNS:
         if pattern.search(text):
             return True
+
+    # Also check without protocol prefix (e.g., youtube.com/watch?v=xxx)
+    text_lower = text.lower()
+    no_proto_indicators = [
+        "youtube.com/watch", "youtube.com/shorts", "youtu.be/",
+        "instagram.com/reel", "instagram.com/p/", "instagram.com/tv/",
+        "tiktok.com/", "vm.tiktok.com/",
+        "facebook.com/reel", "facebook.com/watch", "fb.watch/",
+    ]
+    for indicator in no_proto_indicators:
+        if indicator in text_lower:
+            return True
+
     return False
 
 
@@ -85,13 +99,29 @@ def is_music_request(text: str) -> bool:
 
 
 def extract_url(text: str) -> Optional[str]:
-    """Extract the first URL from text."""
+    """
+    Extract the first URL from text.
+    Handles URLs with or without http(s):// prefix.
+    """
+    # First try to find a full URL with protocol
     url_pattern = re.compile(
         r'https?://[^\s<>"{}|\\^`\[\]]+',
         re.IGNORECASE,
     )
     match = url_pattern.search(text)
-    return match.group(0) if match else None
+    if match:
+        return match.group(0)
+
+    # Try to find URL without protocol (e.g. youtube.com/watch?v=xxx)
+    no_proto_pattern = re.compile(
+        r'(?:www\.)?(?:youtube\.com|youtu\.be|instagram\.com|tiktok\.com|vm\.tiktok\.com|facebook\.com|fb\.watch)[^\s<>"{}|\\^`\[\]]*',
+        re.IGNORECASE,
+    )
+    match = no_proto_pattern.search(text)
+    if match:
+        return "https://" + match.group(0)
+
+    return None
 
 
 async def download_video(url: str) -> Tuple[Optional[str], str]:

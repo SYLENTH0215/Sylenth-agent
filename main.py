@@ -48,9 +48,7 @@ async def on_startup(bot: Bot) -> None:
 
 async def on_shutdown(bot: Bot) -> None:
     """Actions to perform on bot shutdown."""
-    logger.info("Bot is shutting down...")
-    await bot.session.close()
-    logger.info("Bot session closed. Goodbye!")
+    logger.info("Bot is shutting down... Goodbye!")
 
 
 async def main() -> None:

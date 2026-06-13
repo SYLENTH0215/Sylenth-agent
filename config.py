@@ -8,7 +8,7 @@ All settings are defined directly here - no external .env file needed.
 # =============================================================================
 
 BOT_TOKEN: str = "8701673908:AAGk2e6J8X79AvVE2VuajywwiuvnK_GhqC8"
-OPENAI_API_KEY: str = "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"
+OPENAI_API_KEY: str = "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"
 ADMIN_ID: int = 8103843122
 
 # =============================================================================

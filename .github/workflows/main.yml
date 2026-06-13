@@ -4,23 +4,24 @@ on:
   push:
     branches: [ main ]
   schedule:
-    - cron: '0 */4 * * *'
+    - cron: '0 */5 * * *'
+  workflow_dispatch:
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    timeout-minutes: 350
 
     steps:
       - name: Kodni yuklab olish
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Python-ni sozlash
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
-      # Muammoli action olib tashlandi, uning o'rniga barqaror apt-get usuli qo'yildi
-      - name: FFmpeg o'rnatish (Ishonchli usul)
+      - name: FFmpeg o'rnatish
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
@@ -31,9 +32,4 @@ jobs:
           pip install -r requirements.txt
 
       - name: Botni ishga tushirish
-        env:
-          BOT_TOKEN:        ${{ secrets.BOT_TOKEN }}
-          GEMINI_KEY:       ${{ secrets.GEMINI_KEY }}
-          ADMIN_ID:         ${{ secrets.ADMIN_ID }}
-          REQUIRED_CHANNEL: ${{ secrets.REQUIRED_CHANNEL }}
-        run: timeout --preserve-status 14000s python main.py
+        run: timeout --preserve-status 20000s python main.py

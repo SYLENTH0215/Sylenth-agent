@@ -1,236 +1,265 @@
-import sqlite3
-import random
-import logging
+"""
+Async SQLite database module for bot persistence.
+Handles user data, conversation history, and per-user memory storage.
+"""
+
+import json
 from datetime import datetime
+from typing import Any, Optional
 
-DB = "sylenth.db"
+import aiosqlite
+
+from config import DB_PATH
+
+# SQL for creating tables
+_CREATE_TABLES = """
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY,
+    tg_id INTEGER UNIQUE NOT NULL,
+    username TEXT,
+    full_name TEXT,
+    created_at TEXT NOT NULL,
+    last_active TEXT NOT NULL,
+    msg_count INTEGER DEFAULT 0,
+    preferences TEXT DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(tg_id)
+);
+
+CREATE TABLE IF NOT EXISTS user_memory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(tg_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_created ON conversations(created_at);
+CREATE INDEX IF NOT EXISTS idx_user_memory_user_id ON user_memory(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_memory_key ON user_memory(user_id, key);
+"""
 
 
-def init_db():
-    """Database-ni yaratish va tabelalarni o'rnatish"""
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.executescript('''
-        CREATE TABLE IF NOT EXISTS users (
-            sylenth_id  INTEGER PRIMARY KEY,
-            tg_id       INTEGER UNIQUE NOT NULL,
-            username    TEXT    DEFAULT "",
-            full_name   TEXT    DEFAULT "",
-            is_banned   INTEGER DEFAULT 0,
-            warn_count  INTEGER DEFAULT 0,
-            mode        TEXT    DEFAULT "chat",
-            joined_at   TEXT    DEFAULT (datetime("now")),
-            last_active TEXT    DEFAULT (datetime("now")),
-            msg_count   INTEGER DEFAULT 0
-        );
-        CREATE TABLE IF NOT EXISTS groups (
-            chat_id   INTEGER PRIMARY KEY,
-            title     TEXT DEFAULT "",
-            added_at  TEXT DEFAULT (datetime("now"))
-        );
-        CREATE TABLE IF NOT EXISTS messages (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            chat_id    INTEGER NOT NULL,
-            tg_id      INTEGER NOT NULL,
-            role       TEXT NOT NULL,
-            content    TEXT NOT NULL,
-            created_at TEXT DEFAULT (datetime("now"))
-        );
-        CREATE TABLE IF NOT EXISTS blacklist (
-            tg_id      INTEGER PRIMARY KEY,
-            reason     TEXT DEFAULT "",
-            banned_at  TEXT DEFAULT (datetime("now"))
-        );
-    ''')
-    conn.commit()
-    conn.close()
-    logging.info("✅ Database ishga tushdi!")
+async def init_db() -> None:
+    """Initialize the database and create tables if they don't exist."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.executescript(_CREATE_TABLES)
+        await db.commit()
 
-def get_or_create_user(tg_id: int, username: str = "", full_name: str = "") -> dict:
-    """Foydalanuvchini olish yoki yaratish"""
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute("SELECT sylenth_id, tg_id, mode, msg_count FROM users WHERE tg_id = ?", (tg_id,))
-    row = c.fetchone()
-    
-    if row:
-        conn.close()
-        return {"sylenth_id": row[0], "tg_id": row[1], "mode": row[2], "msg_count": row[3]}
-    
-    # Yangi foydalanuvchi yaratish
-    sylenth_id = random.randint(100000, 999999)
-    try:
-        conn.execute(
-            "INSERT INTO users (sylenth_id, tg_id, username, full_name) VALUES (?, ?, ?, ?)",
-            (sylenth_id, tg_id, username, full_name)
+
+async def get_or_create_user(
+    tg_id: int,
+    username: Optional[str] = None,
+    full_name: Optional[str] = None,
+) -> dict[str, Any]:
+    """
+    Get an existing user or create a new one.
+    Updates last_active and increments msg_count on each call.
+    Returns user data as a dictionary.
+    """
+    now = datetime.now().isoformat()
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        # Try to get existing user
+        cursor = await db.execute(
+            "SELECT * FROM users WHERE tg_id = ?", (tg_id,)
         )
-        conn.commit()
-    except sqlite3.IntegrityError:
-        sylenth_id = random.randint(100000, 999999)
-        conn.execute(
-            "INSERT INTO users (sylenth_id, tg_id, username, full_name) VALUES (?, ?, ?, ?)",
-            (sylenth_id, tg_id, username, full_name)
+        row = await cursor.fetchone()
+
+        if row:
+            # Update existing user
+            await db.execute(
+                """UPDATE users 
+                   SET last_active = ?, msg_count = msg_count + 1,
+                       username = COALESCE(?, username),
+                       full_name = COALESCE(?, full_name)
+                   WHERE tg_id = ?""",
+                (now, username, full_name, tg_id),
+            )
+            await db.commit()
+
+            # Fetch updated row
+            cursor = await db.execute(
+                "SELECT * FROM users WHERE tg_id = ?", (tg_id,)
+            )
+            row = await cursor.fetchone()
+        else:
+            # Create new user
+            await db.execute(
+                """INSERT INTO users (tg_id, username, full_name, created_at, last_active, msg_count, preferences)
+                   VALUES (?, ?, ?, ?, ?, 1, '{}')""",
+                (tg_id, username, full_name, now, now),
+            )
+            await db.commit()
+
+            cursor = await db.execute(
+                "SELECT * FROM users WHERE tg_id = ?", (tg_id,)
+            )
+            row = await cursor.fetchone()
+
+        return dict(row) if row else {}
+
+
+async def save_message(user_id: int, role: str, content: str) -> None:
+    """
+    Save a message to conversation history.
+    
+    Args:
+        user_id: Telegram user ID
+        role: Message role ('user', 'assistant', 'system')
+        content: Message content text
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO conversations (user_id, role, content, created_at)
+               VALUES (?, ?, ?, ?)""",
+            (user_id, role, content, datetime.now().isoformat()),
         )
-        conn.commit()
+        await db.commit()
+
+
+async def get_conversation_history(
+    user_id: int, limit: int = 50
+) -> list[dict[str, str]]:
+    """
+    Get recent conversation history for a user.
     
-    conn.close()
-    return {"sylenth_id": sylenth_id, "tg_id": tg_id, "mode": "chat", "msg_count": 0}
-
-def get_user(tg_id: int) -> dict | None:
-    """Foydalanuvchi ma'lumotlarini olish"""
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute("SELECT sylenth_id, msg_count, is_banned, joined_at FROM users WHERE tg_id = ?", (tg_id,))
-    row = c.fetchone()
-    conn.close()
-    if row:
-        return {"sylenth_id": row[0], "msg_count": row[1], "is_banned": row[2], "joined_at": row[3]}
-    return None
-
-def is_banned(tg_id: int) -> bool:
-    """Foydalanuvchi ban qilinganligini tekshirish"""
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute("SELECT is_banned FROM users WHERE tg_id = ?", (tg_id,))
-    row = c.fetchone()
-    conn.close()
-    return bool(row and row[0] == 1)
-
-def warn_user(tg_id: int) -> int:
-    """Foydalanuvchiga ogohlantirish"""
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute("UPDATE users SET warn_count = warn_count + 1 WHERE tg_id = ?", (tg_id,))
-    c.execute("SELECT warn_count FROM users WHERE tg_id = ?", (tg_id,))
-    warns = c.fetchone()[0]
-    conn.commit()
-    conn.close()
-    return warns
-
-def ban_user(tg_id: int, reason: str = ""):
-    """Foydalanuvchini ban qilish"""
-    conn = sqlite3.connect(DB)
-    conn.execute("UPDATE users SET is_banned = 1 WHERE tg_id = ?", (tg_id,))
-    conn.execute("INSERT OR REPLACE INTO blacklist (tg_id, reason) VALUES (?, ?)", (tg_id, reason))
-    conn.commit()
-    conn.close()
-
-def unban_user(tg_id: int):
-    """Foydalanuvchini ban dan chiqarish"""
-    conn = sqlite3.connect(DB)
-    conn.execute("UPDATE users SET is_banned = 0, warn_count = 0 WHERE tg_id = ?", (tg_id,))
-    conn.execute("DELETE FROM blacklist WHERE tg_id = ?", (tg_id,))
-    conn.commit()
-    conn.close()
-
-def increment_msg_count(tg_id: int):
-    """Xabar sonini oshirish"""
-    conn = sqlite3.connect(DB)
-    conn.execute("UPDATE users SET msg_count = msg_count + 1, last_active = (datetime('now')) WHERE tg_id = ?", (tg_id,))
-    conn.commit()
-    conn.close()
-
-def clear_history(chat_id: int):
-    """Suhbat tarixini tozalash"""
-    conn = sqlite3.connect(DB)
-    conn.execute("DELETE FROM messages WHERE chat_id = ?", (chat_id,))
-    conn.commit()
-    conn.close()
-
-def save_group(chat_id: int, title: str):
-    """Guruhni saqlash"""
-    conn = sqlite3.connect(DB)
-    conn.execute("INSERT OR REPLACE INTO groups (chat_id, title) VALUES (?, ?)", (chat_id, title))
-    conn.commit()
-    conn.close()
-
-def save_message(chat_id: int, tg_id: int, role: str, content: str):
-    """Xabarni saqlash"""
-    conn = sqlite3.connect(DB)
-    conn.execute(
-        "INSERT INTO messages (chat_id, tg_id, role, content) VALUES (?, ?, ?, ?)",
-        (chat_id, tg_id, role, content)
-    )
-    conn.commit()
-    conn.close()
-
-def get_history(chat_id: int, limit: int = 10) -> list[dict]:
-    """Suhbat tarixini olish"""
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute(
-        "SELECT role, content FROM messages WHERE chat_id=? ORDER BY id DESC LIMIT ?", 
-        (chat_id, limit)
-    )
-    rows = c.fetchall()
-    conn.close()
-    return [{"role": r[0], "parts": [r[1]]} for r in reversed(rows)]
-
-def get_stats() -> dict:
-    """Statistikani olish"""
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
+    Args:
+        user_id: Telegram user ID
+        limit: Maximum number of messages to return (default: 50)
     
-    # Jami foydalanuvchilar
-    c.execute("SELECT COUNT(*) FROM users")
-    total_users = c.fetchone()[0]
+    Returns:
+        List of dicts with 'role' and 'content' keys, ordered oldest first.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """SELECT role, content FROM conversations
+               WHERE user_id = ?
+               ORDER BY created_at DESC
+               LIMIT ?""",
+            (user_id, limit),
+        )
+        rows = await cursor.fetchall()
+
+    # Reverse to get chronological order (oldest first)
+    return [{"role": row["role"], "content": row["content"]} for row in reversed(rows)]
+
+
+async def save_user_memory(user_id: int, key: str, value: str) -> None:
+    """
+    Save or update a memory entry for a user.
+    If the key already exists, its value is updated.
     
-    # Bugun qo'shilganlar
-    c.execute("SELECT COUNT(*) FROM users WHERE joined_at > datetime('now', '-1 day')")
-    today_users = c.fetchone()[0]
+    Args:
+        user_id: Telegram user ID
+        key: Memory key (e.g., 'name', 'favorite_color', 'city')
+        value: Memory value
+    """
+    now = datetime.now().isoformat()
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Check if key exists
+        cursor = await db.execute(
+            "SELECT id FROM user_memory WHERE user_id = ? AND key = ?",
+            (user_id, key),
+        )
+        existing = await cursor.fetchone()
+
+        if existing:
+            await db.execute(
+                """UPDATE user_memory SET value = ?, updated_at = ?
+                   WHERE user_id = ? AND key = ?""",
+                (value, now, user_id, key),
+            )
+        else:
+            await db.execute(
+                """INSERT INTO user_memory (user_id, key, value, updated_at)
+                   VALUES (?, ?, ?, ?)""",
+                (user_id, key, value, now),
+            )
+        await db.commit()
+
+
+async def get_user_memories(user_id: int) -> dict[str, str]:
+    """
+    Get all stored memories for a user.
     
-    # Faol foydalanuvchilar (24 soat ichida)
-    c.execute("SELECT COUNT(*) FROM users WHERE last_active > datetime('now', '-1 day')")
-    active = c.fetchone()[0]
+    Args:
+        user_id: Telegram user ID
     
-    # Banlangan foydalanuvchilar
-    c.execute("SELECT COUNT(*) FROM users WHERE is_banned = 1")
-    banned = c.fetchone()[0]
+    Returns:
+        Dictionary of key-value memory pairs.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT key, value FROM user_memory WHERE user_id = ?",
+            (user_id,),
+        )
+        rows = await cursor.fetchall()
+
+    return {row["key"]: row["value"] for row in rows}
+
+
+async def clear_history(user_id: int) -> None:
+    """
+    Clear all conversation history for a user.
+    Does NOT clear user memories (permanent facts about the user).
     
-    # Guruhlar
-    c.execute("SELECT COUNT(*) FROM groups")
-    total_groups = c.fetchone()[0]
+    Args:
+        user_id: Telegram user ID
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "DELETE FROM conversations WHERE user_id = ?", (user_id,)
+        )
+        await db.commit()
+
+
+async def get_stats() -> dict[str, Any]:
+    """
+    Get overall bot statistics.
     
-    # Xabarlar
-    c.execute("SELECT COUNT(*) FROM messages")
-    total_msgs = c.fetchone()[0]
-    
-    conn.close()
-    
+    Returns:
+        Dictionary with total_users, total_messages, active_today counts.
+    """
+    today = datetime.now().date().isoformat()
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Total users
+        cursor = await db.execute("SELECT COUNT(*) FROM users")
+        total_users = (await cursor.fetchone())[0]
+
+        # Total messages
+        cursor = await db.execute("SELECT COUNT(*) FROM conversations")
+        total_messages = (await cursor.fetchone())[0]
+
+        # Active today
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM users WHERE last_active LIKE ?",
+            (f"{today}%",),
+        )
+        active_today = (await cursor.fetchone())[0]
+
+        # Total memories stored
+        cursor = await db.execute("SELECT COUNT(*) FROM user_memory")
+        total_memories = (await cursor.fetchone())[0]
+
     return {
-        "total": total_users,
-        "today": today_users,
-        "active": active,
-        "banned": banned,
-        "groups": total_groups,
-        "messages": total_msgs
+        "total_users": total_users,
+        "total_messages": total_messages,
+        "active_today": active_today,
+        "total_memories": total_memories,
     }
-
-def get_all_user_ids() -> list[int]:
-    """Barcha ban qilinmagan foydalanuvchilarning IDlarini olish"""
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute("SELECT tg_id FROM users WHERE is_banned = 0")
-    ids = [r[0] for r in c.fetchall()]
-    conn.close()
-    return ids
-
-def get_all_group_ids() -> list[int]:
-    """Barcha guruhlarning IDlarini olish"""
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute("SELECT chat_id FROM groups")
-    ids = [r[0] for r in c.fetchall()]
-    conn.close()
-    return ids
-
-def get_recent_users(limit: int = 10) -> list[dict]:
-    """So'nggi qo'shilgan foydalanuvchilarni olish"""
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute("""SELECT sylenth_id, tg_id, full_name, username, is_banned, msg_count, joined_at
-                 FROM users ORDER BY joined_at DESC LIMIT ?""", (limit,))
-    cols = [d[0] for d in c.description]
-    rows = c.fetchall()
-    conn.close()
-    return [dict(zip(cols, r)) for r in rows]

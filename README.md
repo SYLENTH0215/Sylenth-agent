@@ -1,6 +1,6 @@
 # Sylenth Agent Bot
 
-Aqlli, xavfsiz va ko'p funksiyali Telegram bot - OpenAI GPT bilan ishlaydi.
+Aqlli, xavfsiz va ko'p funksiyali Telegram bot - SYLENTH Agent sun'iy intellekt bilan ishlaydi.
 
 ## Xususiyatlar
 
@@ -11,6 +11,7 @@ Aqlli, xavfsiz va ko'p funksiyali Telegram bot - OpenAI GPT bilan ishlaydi.
 - **Video yuklab olish** - YouTube, Instagram, TikTok, Facebook havolalarini yuboring
 - **Internet qidiruv** - DuckDuckGo orqali ishonchli ma'lumot
 - **Xavfsizlik filtri** - Nojoʻya kontentdan himoya
+- **Fayl tahlili** - PDF, DOCX, XLSX, kod fayllar va ZIP arxivlarni tahlil qilish
 
 ## O'rnatish
 
@@ -31,7 +32,7 @@ cp .env.example .env
 
 Kerakli o'zgaruvchilar:
 - `BOT_TOKEN` - Telegram BotFather dan olingan token
-- `OPENAI_API_KEY` - OpenAI API kaliti
+- `GEMINI_API_KEY` - Google Gemini API kaliti
 - `ADMIN_ID` - Admin Telegram ID raqami
 
 ### 3. Kutubxonalarni o'rnatish
@@ -53,19 +54,20 @@ python main.py
 | `/start` | Botni ishga tushirish |
 | `/help` | Yordam sahifasi |
 | `/clear` | Suhbat tarixini tozalash |
-| `/search <so'rov>` | Internetdan qidirish |
-| `/music <nomi>` | Musiqa yuklab olish |
 
 ## Foydalanish
 
 ### AI Suhbat
-Botga istalgan savolingizni yozing - u javob beradi.
+Botga istalgan savolingizni yozing - u javob beradi. Qidiruv va musiqa topish avtomatik ishlaydi.
 
 ### Video yuklash
 YouTube, Instagram, TikTok yoki Facebook video havolasini yuboring - bot yuklab beradi.
 
 ### Musiqa qidirish
-Qo'shiq nomini yozing yoki `/music` buyrug'idan foydalaning.
+Qo'shiq nomini yozing - bot avtomatik topib beradi va inline tugmalar orqali tanlash imkonini beradi.
+
+### Fayl tahlili
+PDF, DOCX, XLSX yoki kod faylini yuboring - bot mazmunini tahlil qilib beradi.
 
 ### Guruhda foydalanish
 Botni guruhga qo'shing va `@bot_username savol` yoki botning xabariga reply qiling.
@@ -74,11 +76,10 @@ Botni guruhga qo'shing va `@bot_username savol` yoki botning xabariga reply qili
 
 - **Python 3.11+**
 - **aiogram 3.x** - Telegram Bot API framework
-- **OpenAI GPT** - Sun'iy intellekt
+- **Google Gemini** - Sun'iy intellekt
 - **yt-dlp** - Video/audio yuklab olish
 - **DuckDuckGo Search** - Internet qidiruv
 - **aiosqlite** - Asinxron SQLite ma'lumotlar bazasi
-- **python-dotenv** - Muhit o'zgaruvchilarni boshqarish
 
 ## Loyiha tuzilishi
 
@@ -91,14 +92,16 @@ Sylenth-agent/
   bot/
     __init__.py
     safety.py        - Xavfsizlik filtri
-    ai_engine.py     - OpenAI integratsiyasi
+    ai_engine.py     - Gemini AI integratsiyasi
     search.py        - Internet qidiruv
     downloader.py    - Media yuklab olish
+    file_analyzer.py - Fayl tahlili
   handlers/
     __init__.py
     commands.py      - Buyruq handlerlari
     private.py       - Shaxsiy xabarlar
     group.py         - Guruh xabarlari
+    utils.py         - Yordamchi funksiyalar
   middlewares/
     __init__.py
     throttle.py      - Anti-flood

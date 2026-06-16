@@ -4,7 +4,7 @@ Tests for the web search module (bot/search.py).
 Feature: project-hardening
 Covers Requirements 5.4, 5.5.
 
-bot.search imports ddgs at module load; skips gracefully when ddgs is missing.
+bot.search imports duckduckgo_search at module load; skips gracefully when duckduckgo_search is missing.
 """
 
 import asyncio
@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-pytest.importorskip("ddgs")
+pytest.importorskip("duckduckgo_search")
 
 from bot import search
 

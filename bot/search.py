@@ -7,7 +7,7 @@ import asyncio
 import logging
 from typing import Optional
 
-from ddgs import DDGS
+from duckduckgo_search import DDGS
 
 logger = logging.getLogger(__name__)
 

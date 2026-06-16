@@ -25,7 +25,7 @@ FIRST_PARTY_MODULES = [
     ("handlers.utils", ["aiogram"]),
     ("middlewares.throttle", ["aiogram"]),
     ("database", ["aiosqlite"]),
-    ("bot.search", ["ddgs"]),
+    ("bot.search", ["duckduckgo_search"]),
     ("bot.downloader", ["yt_dlp"]),
     ("bot.ai_engine", ["google.generativeai", "aiosqlite"]),
     ("handlers.commands", ["aiogram", "aiosqlite"]),
@@ -89,7 +89,7 @@ def test_property_logs_exclude_credentials(caplog):
     API key, or the admin id. We exercise the search error path with a mocked
     failure and assert the credentials never appear in emitted logs.
     """
-    pytest.importorskip("ddgs")
+    pytest.importorskip("duckduckgo_search")
     import config
     from bot import search
     from unittest.mock import patch

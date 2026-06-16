@@ -37,12 +37,14 @@ router.message.filter(F.chat.type.in_({"group", "supergroup"}))
 
 
 def _is_bot_mentioned(message: types.Message, bot_username: str) -> bool:
-    """Check if the bot is mentioned in the message."""
+    """Check if the bot is mentioned in the message (case-insensitive)."""
     if not message.text:
         return False
 
+    target = f"@{bot_username}".lower()
+
     # Check for @username mention in text
-    if f"@{bot_username}" in message.text.lower():
+    if target in message.text.lower():
         return True
 
     # Check entities for mention
@@ -50,7 +52,7 @@ def _is_bot_mentioned(message: types.Message, bot_username: str) -> bool:
         for entity in message.entities:
             if entity.type == "mention":
                 mention_text = message.text[entity.offset:entity.offset + entity.length]
-                if mention_text.lower() == f"@{bot_username}":
+                if mention_text.lower() == target:
                     return True
 
     return False

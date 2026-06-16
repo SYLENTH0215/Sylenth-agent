@@ -1,9 +1,24 @@
 """
 Async SQLite database module for bot persistence.
 Handles user data, conversation history, and per-user memory storage.
+
+Foreign-key design
+------------------
+``conversations.user_id`` and ``user_memory.user_id`` reference the *primary
+key* ``users(id)`` (Requirement 9.1). Foreign-key enforcement is enabled per
+connection via ``PRAGMA foreign_keys = ON`` (off by default in SQLite).
+
+Compatibility note: callers pass the *Telegram* id as ``user_id`` and the public
+function signatures are unchanged. Because the FK now targets the surrogate
+primary key ``users(id)`` (not the Telegram id stored in ``users.tg_id``), each
+function translates the caller-supplied Telegram id to the matching
+``users.id`` internally before reading/writing conversations and memories. This
+keeps history/memory keyed by Telegram id from the caller's perspective while
+satisfying referential integrity against the primary key.
 """
 
 import json
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, Optional
 
@@ -30,7 +45,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     role TEXT NOT NULL,
     content TEXT NOT NULL,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(tg_id)
+    FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
 CREATE TABLE IF NOT EXISTS user_memory (
@@ -39,7 +54,7 @@ CREATE TABLE IF NOT EXISTS user_memory (
     key TEXT NOT NULL,
     value TEXT NOT NULL,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(tg_id)
+    FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id);
@@ -49,9 +64,36 @@ CREATE INDEX IF NOT EXISTS idx_user_memory_key ON user_memory(user_id, key);
 """
 
 
+@asynccontextmanager
+async def _connect():
+    """
+    Open a SQLite connection with foreign-key enforcement enabled.
+
+    SQLite leaves ``PRAGMA foreign_keys`` OFF by default and it must be set per
+    connection, so every FK-constrained read/write goes through this helper.
+    """
+    db = await aiosqlite.connect(DB_PATH)
+    try:
+        await db.execute("PRAGMA foreign_keys = ON")
+        yield db
+    finally:
+        await db.close()
+
+
+async def _resolve_user_pk(db: aiosqlite.Connection, tg_id: int) -> Optional[int]:
+    """
+    Translate a Telegram id to the surrogate ``users.id`` primary key.
+
+    Returns ``None`` when no matching user row exists.
+    """
+    cursor = await db.execute("SELECT id FROM users WHERE tg_id = ?", (tg_id,))
+    row = await cursor.fetchone()
+    return row[0] if row else None
+
+
 async def init_db() -> None:
     """Initialize the database and create tables if they don't exist."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.executescript(_CREATE_TABLES)
         await db.commit()
 
@@ -68,7 +110,7 @@ async def get_or_create_user(
     """
     now = datetime.now().isoformat()
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
 
         # Try to get existing user
@@ -121,18 +163,23 @@ async def save_message(user_id: int, role: str, content: str) -> None:
         role: Message role ('user', 'assistant', 'system')
         content: Message content text
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
+        pk = await _resolve_user_pk(db, user_id)
+        if pk is None:
+            # No parent user row; cannot store a FK-constrained message.
+            return
+
         await db.execute(
             """INSERT INTO conversations (user_id, role, content, created_at)
                VALUES (?, ?, ?, ?)""",
-            (user_id, role, content, datetime.now().isoformat()),
+            (pk, role, content, datetime.now().isoformat()),
         )
         await db.commit()
 
         # Check message count and prune every 10th message
         cursor = await db.execute(
             "SELECT COUNT(*) FROM conversations WHERE user_id = ?",
-            (user_id,),
+            (pk,),
         )
         count = (await cursor.fetchone())[0]
         if count > 0 and count % 10 == 0:
@@ -147,11 +194,15 @@ async def prune_old_conversations(user_id: int, keep_limit: int = 200) -> None:
         user_id: Telegram user ID
         keep_limit: Maximum number of messages to keep (default: 200)
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
+        pk = await _resolve_user_pk(db, user_id)
+        if pk is None:
+            return
+
         # Count total messages for this user
         cursor = await db.execute(
             "SELECT COUNT(*) FROM conversations WHERE user_id = ?",
-            (user_id,),
+            (pk,),
         )
         total = (await cursor.fetchone())[0]
 
@@ -166,7 +217,7 @@ async def prune_old_conversations(user_id: int, keep_limit: int = 200) -> None:
                 ORDER BY created_at ASC
                 LIMIT ?
             )""",
-            (user_id, total - keep_limit),
+            (pk, total - keep_limit),
         )
         await db.commit()
 
@@ -184,14 +235,18 @@ async def get_conversation_history(
     Returns:
         List of dicts with 'role' and 'content' keys, ordered oldest first.
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
+        pk = await _resolve_user_pk(db, user_id)
+        if pk is None:
+            return []
+
         cursor = await db.execute(
             """SELECT role, content FROM conversations
                WHERE user_id = ?
                ORDER BY created_at DESC
                LIMIT ?""",
-            (user_id, limit),
+            (pk, limit),
         )
         rows = await cursor.fetchall()
 
@@ -211,11 +266,15 @@ async def save_user_memory(user_id: int, key: str, value: str) -> None:
     """
     now = datetime.now().isoformat()
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
+        pk = await _resolve_user_pk(db, user_id)
+        if pk is None:
+            return
+
         # Check if key exists
         cursor = await db.execute(
             "SELECT id FROM user_memory WHERE user_id = ? AND key = ?",
-            (user_id, key),
+            (pk, key),
         )
         existing = await cursor.fetchone()
 
@@ -223,13 +282,13 @@ async def save_user_memory(user_id: int, key: str, value: str) -> None:
             await db.execute(
                 """UPDATE user_memory SET value = ?, updated_at = ?
                    WHERE user_id = ? AND key = ?""",
-                (value, now, user_id, key),
+                (value, now, pk, key),
             )
         else:
             await db.execute(
                 """INSERT INTO user_memory (user_id, key, value, updated_at)
                    VALUES (?, ?, ?, ?)""",
-                (user_id, key, value, now),
+                (pk, key, value, now),
             )
         await db.commit()
 
@@ -244,11 +303,15 @@ async def get_user_memories(user_id: int) -> dict[str, str]:
     Returns:
         Dictionary of key-value memory pairs.
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
+        pk = await _resolve_user_pk(db, user_id)
+        if pk is None:
+            return {}
+
         cursor = await db.execute(
             "SELECT key, value FROM user_memory WHERE user_id = ?",
-            (user_id,),
+            (pk,),
         )
         rows = await cursor.fetchall()
 
@@ -263,9 +326,13 @@ async def clear_history(user_id: int) -> None:
     Args:
         user_id: Telegram user ID
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
+        pk = await _resolve_user_pk(db, user_id)
+        if pk is None:
+            return
+
         await db.execute(
-            "DELETE FROM conversations WHERE user_id = ?", (user_id,)
+            "DELETE FROM conversations WHERE user_id = ?", (pk,)
         )
         await db.commit()
 
@@ -279,7 +346,7 @@ async def get_stats() -> dict[str, Any]:
     """
     today = datetime.now().date().isoformat()
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         # Total users
         cursor = await db.execute("SELECT COUNT(*) FROM users")
         total_users = (await cursor.fetchone())[0]

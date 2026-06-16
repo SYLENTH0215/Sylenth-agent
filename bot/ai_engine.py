@@ -7,6 +7,7 @@ IMPORTANT: This bot identifies itself as SYLENTH Agent at all times.
 It never reveals the underlying AI model or technology.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -134,6 +135,48 @@ ERROR_MESSAGE_UZ = (
     "Kechirasiz, hozir texnik nosozlik yuz berdi. "
     "Iltimos, birozdan so'ng qayta urinib ko'ring. 🔄"
 )
+
+# ============================================================================
+# Off-loop Gemini call helper (timeout + bounded retry)
+# ============================================================================
+
+# Finite timeout applied to each synchronous Gemini network call.
+GEMINI_TIMEOUT_SECONDS = 30.0
+# Bounded retries on transient errors (total attempts = retries + 1).
+GEMINI_MAX_RETRIES = 2
+
+
+async def _gemini_call(send_fn, *args):
+    """
+    Run a synchronous Gemini call off the event loop, with a finite timeout
+    and a bounded number of retries on transient errors.
+
+    The synchronous SDK call (``chat.send_message``) is offloaded to a worker
+    thread via ``asyncio.to_thread`` so it never blocks the event loop, and is
+    bounded by ``asyncio.wait_for``. On timeout or transient failure the call is
+    retried up to ``GEMINI_MAX_RETRIES`` times; if every attempt fails the last
+    exception is re-raised so the caller's outer handler returns the Uzbek error
+    dict.
+
+    Log hygiene: only the exception *type name* and an attempt counter are
+    logged - never the API key, prompt content, or token.
+    """
+    last_exc = None
+    for attempt in range(GEMINI_MAX_RETRIES + 1):
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(send_fn, *args),
+                timeout=GEMINI_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:  # timeout or transient error
+            last_exc = exc
+            logger.warning(
+                "Gemini call attempt %d/%d failed: %s",
+                attempt + 1,
+                GEMINI_MAX_RETRIES + 1,
+                type(exc).__name__,
+            )
+    raise last_exc
 
 
 def _build_memory_context(memories: dict) -> str:
@@ -331,8 +374,8 @@ async def get_ai_response(user_id: int, user_text: str, user_name: str = "") -> 
         # Start chat with history
         chat = model.start_chat(history=gemini_history)
 
-        # Send user message
-        response = chat.send_message(user_text)
+        # Send user message (off-loop, with timeout + bounded retry)
+        response = await _gemini_call(chat.send_message, user_text)
 
         music_results = None
 
@@ -382,9 +425,10 @@ async def get_ai_response(user_id: int, user_text: str, user_name: str = "") -> 
                     )
                 )
 
-            # Send function results back to Gemini
-            response = chat.send_message(
-                genai.protos.Content(parts=function_responses)
+            # Send function results back to Gemini (off-loop, with timeout + retry)
+            response = await _gemini_call(
+                chat.send_message,
+                genai.protos.Content(parts=function_responses),
             )
 
         # Extract final AI text from response

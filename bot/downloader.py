@@ -16,6 +16,7 @@ import asyncio
 import logging
 import os
 import re
+import uuid
 from pathlib import Path
 from typing import Optional, Tuple, Callable, Awaitable
 
@@ -27,6 +28,11 @@ logger = logging.getLogger(__name__)
 DOWNLOADS_DIR = "downloads"
 MAX_FILE_SIZE_MB = 50
 COOKIES_FILE = "cookies.txt"
+
+# Maximum number of simultaneous download operations. Requests beyond this
+# limit wait until a slot becomes free.
+MAX_CONCURRENT_DOWNLOADS = 3
+_download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 
 # Supported video platforms
 VIDEO_PLATFORMS = [
@@ -154,20 +160,22 @@ def extract_url(text: str) -> Optional[str]:
     return None
 
 
-def _build_video_ydl_opts(url: str) -> dict:
+def _build_video_ydl_opts(url: str, token: str) -> dict:
     """
     Build yt-dlp options for video download.
     Includes cookies.txt if available and the URL is for Instagram/Facebook.
 
     Args:
         url: The video URL to build options for
+        token: Per-invocation unique token used in the output template so that
+               concurrent downloads of the same media id never collide
 
     Returns:
         dict of yt-dlp options
     """
     opts = {
         "format": "best[ext=mp4][filesize<50M]/best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
-        "outtmpl": os.path.join(DOWNLOADS_DIR, "%(id)s.%(ext)s"),
+        "outtmpl": os.path.join(DOWNLOADS_DIR, f"%(id)s.{token}.%(ext)s"),
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
@@ -191,19 +199,22 @@ def _build_video_ydl_opts(url: str) -> dict:
     return opts
 
 
-def _build_music_ydl_opts(use_cookies: bool = False) -> dict:
+def _build_music_ydl_opts(use_cookies: bool = False, token: str = "") -> dict:
     """
     Build yt-dlp options for music download (audio extraction).
 
     Args:
         use_cookies: Whether to include cookies.txt
+        token: Per-invocation unique token used in the output template so that
+               concurrent downloads of the same media id never collide
 
     Returns:
         dict of yt-dlp options
     """
+    suffix = f".{token}" if token else ""
     opts = {
         "format": "bestaudio/best",
-        "outtmpl": os.path.join(DOWNLOADS_DIR, "%(id)s.%(ext)s"),
+        "outtmpl": os.path.join(DOWNLOADS_DIR, f"%(id)s{suffix}.%(ext)s"),
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
@@ -254,10 +265,9 @@ async def download_video(
         except Exception:
             pass
 
-    ydl_opts = _build_video_ydl_opts(url)
+    ydl_opts = _build_video_ydl_opts(url, token=uuid.uuid4().hex[:8])
 
     try:
-        loop = asyncio.get_event_loop()
 
         def _download():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -299,7 +309,8 @@ async def download_video(
 
                 return filename, title
 
-        result = await loop.run_in_executor(None, _download)
+        async with _download_semaphore:
+            result = await asyncio.to_thread(_download)
 
         # Stage 2: Download complete, preparing to send
         if result[0] is not None and status_callback:
@@ -352,7 +363,6 @@ async def search_music(query: str, max_results: int = 5) -> list:
         Returns empty list on failure.
     """
     try:
-        loop = asyncio.get_event_loop()
 
         def _search():
             ydl_opts = {
@@ -393,7 +403,7 @@ async def search_music(query: str, max_results: int = 5) -> list:
 
                 return results
 
-        results = await loop.run_in_executor(None, _search)
+        results = await asyncio.to_thread(_search)
         return results
 
     except Exception as e:
@@ -425,11 +435,11 @@ async def download_music(
         except Exception:
             pass
 
-    ydl_opts = _build_music_ydl_opts(use_cookies=False)
+    token = uuid.uuid4().hex[:8]
+    ydl_opts = _build_music_ydl_opts(use_cookies=False, token=token)
     ydl_opts["default_search"] = "ytsearch1"
 
     try:
-        loop = asyncio.get_event_loop()
 
         def _download():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -449,13 +459,13 @@ async def download_music(
                 artist = info.get("uploader", info.get("artist", "Unknown"))
                 duration = info.get("duration", 0)
 
-                # Build expected filename
-                video_id = info.get("id", "unknown")
-                filename = os.path.join(DOWNLOADS_DIR, f"{video_id}.mp3")
+                # Derive the collision-safe base name from the output template
+                # and locate the post-processed audio file.
+                base = os.path.splitext(ydl.prepare_filename(info))[0]
+                filename = base + ".mp3"
 
                 if not os.path.exists(filename):
-                    # Try other possible filenames after postprocessor
-                    base = os.path.join(DOWNLOADS_DIR, video_id)
+                    # Try other possible extensions after the postprocessor
                     for ext in [".mp3", ".m4a", ".webm", ".opus"]:
                         if os.path.exists(base + ext):
                             filename = base + ext
@@ -483,7 +493,8 @@ async def download_music(
 
                 return filename, metadata
 
-        result = await loop.run_in_executor(None, _download)
+        async with _download_semaphore:
+            result = await asyncio.to_thread(_download)
 
         # Stage 2: Ready to send
         if result[0] is not None and status_callback:
@@ -524,10 +535,10 @@ async def download_music_by_url(
             pass
 
     use_cookies = _needs_cookies(url)
-    ydl_opts = _build_music_ydl_opts(use_cookies=use_cookies)
+    token = uuid.uuid4().hex[:8]
+    ydl_opts = _build_music_ydl_opts(use_cookies=use_cookies, token=token)
 
     try:
-        loop = asyncio.get_event_loop()
 
         def _download():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -540,11 +551,12 @@ async def download_music_by_url(
                 artist = info.get("uploader", info.get("artist", "Unknown"))
                 duration = info.get("duration", 0)
 
-                video_id = info.get("id", "unknown")
-                filename = os.path.join(DOWNLOADS_DIR, f"{video_id}.mp3")
+                # Derive the collision-safe base name from the output template
+                # and locate the post-processed audio file.
+                base = os.path.splitext(ydl.prepare_filename(info))[0]
+                filename = base + ".mp3"
 
                 if not os.path.exists(filename):
-                    base = os.path.join(DOWNLOADS_DIR, video_id)
                     for ext in [".mp3", ".m4a", ".webm", ".opus"]:
                         if os.path.exists(base + ext):
                             filename = base + ext
@@ -571,7 +583,8 @@ async def download_music_by_url(
 
                 return filename, metadata
 
-        result = await loop.run_in_executor(None, _download)
+        async with _download_semaphore:
+            result = await asyncio.to_thread(_download)
 
         # Stage 2: Ready to send
         if result[0] is not None and status_callback:
@@ -601,3 +614,21 @@ def cleanup_file(path: str) -> None:
             logger.debug(f"Cleaned up file: {path}")
     except Exception as e:
         logger.warning(f"Failed to cleanup file {path}: {e}")
+
+
+def cleanup_stale_downloads() -> None:
+    """
+    Remove leftover files in the downloads directory from previous runs.
+
+    Called on startup so the bot never accumulates stale media files. Missing
+    directory is a no-op; per-file removal failures are logged and skipped.
+    """
+    d = Path(DOWNLOADS_DIR)
+    if not d.exists():
+        return
+    for f in d.iterdir():
+        if f.is_file():
+            try:
+                f.unlink()
+            except OSError as exc:
+                logger.warning("Could not remove stale file %s: %s", f.name, exc)

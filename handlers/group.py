@@ -3,6 +3,7 @@ Group message handler.
 Only responds when the bot is mentioned (@username) or replied to.
 Auto-detects video URLs in groups without requiring @mention.
 AI-driven responses with function calling for search and music.
+Multi-stage status updates for downloads (Yuklanmoqda -> Botga yuklanmoqda -> Yuborildi).
 """
 
 import logging
@@ -36,12 +37,14 @@ router.message.filter(F.chat.type.in_({"group", "supergroup"}))
 
 
 def _is_bot_mentioned(message: types.Message, bot_username: str) -> bool:
-    """Check if the bot is mentioned in the message."""
+    """Check if the bot is mentioned in the message (case-insensitive)."""
     if not message.text:
         return False
 
+    target = f"@{bot_username}".lower()
+
     # Check for @username mention in text
-    if f"@{bot_username}" in message.text.lower():
+    if target in message.text.lower():
         return True
 
     # Check entities for mention
@@ -49,7 +52,7 @@ def _is_bot_mentioned(message: types.Message, bot_username: str) -> bool:
         for entity in message.entities:
             if entity.type == "mention":
                 mention_text = message.text[entity.offset:entity.offset + entity.length]
-                if mention_text.lower() == f"@{bot_username}":
+                if mention_text.lower() == target:
                     return True
 
     return False
@@ -185,32 +188,65 @@ async def handle_group_message(message: types.Message, bot: Bot) -> None:
 
 
 async def _handle_group_video(message: types.Message, url: str) -> None:
-    """Handle a video URL in a group - download and send."""
+    """
+    Handle a video URL in a group - download and send.
+    Multi-stage status: Yuklanmoqda -> Botga yuklanmoqda -> Yuborildi
+    """
     status_msg = await message.reply("📹 Video yuklanmoqda... ⏳")
+
+    # Create status callback for multi-stage updates
+    async def update_status(text: str) -> None:
+        try:
+            await status_msg.edit_text(text)
+        except Exception:
+            pass
 
     try:
         await message.answer_chat_action(action="upload_video")
-        file_path, title = await download_video(url)
+
+        # Download with status callback
+        file_path, title = await download_video(url, status_callback=update_status)
 
         if file_path is None:
             await status_msg.edit_text(f"❌ {title}")
             return
 
         try:
+            # Stage: Sending to Telegram
+            try:
+                await status_msg.edit_text("📤 Botga yuklanmoqda... ⏳")
+            except Exception:
+                pass
+
+            await message.answer_chat_action(action="upload_video")
             video_file = types.FSInputFile(file_path, filename=f"{title}.mp4")
             await message.answer_video(
                 video=video_file,
                 caption=f"📹 {title}",
             )
-            await status_msg.delete()
+
+            # Stage: Done
+            try:
+                await status_msg.edit_text("✅ Video yuborildi!")
+            except Exception:
+                pass
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
+
         finally:
+            # Always cleanup the downloaded file
             cleanup_file(file_path)
 
     except Exception as e:
         logger.error(f"Group video handler error: {e}")
-        await status_msg.edit_text(
-            "❌ Video yuklashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
-        )
+        try:
+            await status_msg.edit_text(
+                "❌ Video yuklashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
+            )
+        except Exception:
+            pass
 
 
 @router.callback_query(F.data.startswith("music:"))
@@ -218,6 +254,7 @@ async def handle_group_music_callback(callback: types.CallbackQuery) -> None:
     """
     Handle music selection callback in groups.
     Downloads the selected track and sends it as audio.
+    Multi-stage status: Yuklanmoqda -> Botga yuklanmoqda -> Yuborildi
     """
     user = callback.from_user
     if not user or not callback.data:
@@ -241,9 +278,20 @@ async def handle_group_music_callback(callback: types.CallbackQuery) -> None:
 
     status_msg = await message.answer("🎵 Musiqa yuklanmoqda... ⏳")
 
+    # Create status callback for multi-stage updates
+    async def update_status(text: str) -> None:
+        try:
+            await status_msg.edit_text(text)
+        except Exception:
+            pass
+
     try:
         await message.answer_chat_action(action="upload_voice")
-        file_path, metadata = await download_music_by_url(url)
+
+        # Download with status callback
+        file_path, metadata = await download_music_by_url(
+            url, status_callback=update_status
+        )
 
         if file_path is None:
             error_text = metadata.get("error", "Musiqa yuklab olinmadi.")
@@ -255,6 +303,12 @@ async def handle_group_music_callback(callback: types.CallbackQuery) -> None:
         duration = metadata.get("duration", 0)
 
         try:
+            # Stage: Sending to Telegram
+            try:
+                await status_msg.edit_text("📤 Botga yuklanmoqda... ⏳")
+            except Exception:
+                pass
+
             audio_file = types.FSInputFile(file_path, filename=f"{title}.mp3")
             await message.answer_audio(
                 audio=audio_file,
@@ -263,12 +317,22 @@ async def handle_group_music_callback(callback: types.CallbackQuery) -> None:
                 duration=int(duration) if duration else None,
                 caption=f"🎵 {title}",
             )
-            await status_msg.delete()
+
+            # Stage: Done
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
+
         finally:
+            # Always cleanup the downloaded file
             cleanup_file(file_path)
 
     except Exception as e:
         logger.error(f"Group music callback handler error: {e}")
-        await status_msg.edit_text(
-            "❌ Musiqa yuklashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
-        )
+        try:
+            await status_msg.edit_text(
+                "❌ Musiqa yuklashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
+            )
+        except Exception:
+            pass

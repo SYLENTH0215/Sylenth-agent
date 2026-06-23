@@ -9,7 +9,7 @@ import logging
 from typing import Any, Awaitable, Callable, Dict
 
 from aiogram import BaseMiddleware
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery, TelegramObject
 
 logger = logging.getLogger(__name__)
 
@@ -68,13 +68,14 @@ class ThrottleMiddleware(BaseMiddleware):
 
     async def __call__(
         self,
-        handler: Callable[[Message, Dict[str, Any]], Awaitable[Any]],
-        event: Message,
+        handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
         data: Dict[str, Any],
     ) -> Any:
-        """Process incoming message and apply throttle."""
-        user = event.from_user
-        if not user:
+        """Process an incoming message or callback query and apply throttle."""
+        # Read from_user defensively; events without a user pass through.
+        user = getattr(event, "from_user", None)
+        if user is None:
             return await handler(event, data)
 
         user_id = user.id
@@ -93,7 +94,11 @@ class ThrottleMiddleware(BaseMiddleware):
             if not self._user_warned.get(user_id, False):
                 self._user_warned[user_id] = True
                 try:
-                    await event.answer(THROTTLE_WARNING)
+                    if isinstance(event, CallbackQuery):
+                        # Acknowledge the callback with the warning text.
+                        await event.answer(THROTTLE_WARNING, show_alert=False)
+                    elif isinstance(event, Message):
+                        await event.answer(THROTTLE_WARNING)
                 except Exception:
                     pass
             return None
@@ -102,5 +107,5 @@ class ThrottleMiddleware(BaseMiddleware):
         self._user_last_time[user_id] = current_time
         self._user_warned[user_id] = False
 
-        # Process the message normally
+        # Process the event normally
         return await handler(event, data)

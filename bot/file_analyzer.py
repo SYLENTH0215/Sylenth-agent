@@ -68,8 +68,7 @@ async def analyze_pdf(file_path: str) -> str:
             doc.close()
             return text_parts
 
-        loop = asyncio.get_event_loop()
-        text_parts = await loop.run_in_executor(None, _read_pdf)
+        text_parts = await asyncio.to_thread(_read_pdf)
 
         if not text_parts:
             return "PDF fayldan matn ajratib olib bo'lmadi (rasm asosidagi PDF bo'lishi mumkin)."
@@ -114,8 +113,7 @@ async def analyze_docx(file_path: str) -> str:
 
             return text_parts
 
-        loop = asyncio.get_event_loop()
-        text_parts = await loop.run_in_executor(None, _read_docx)
+        text_parts = await asyncio.to_thread(_read_docx)
 
         if not text_parts:
             return "DOCX fayldan matn ajratib olib bo'lmadi."
@@ -165,8 +163,7 @@ async def analyze_xlsx(file_path: str) -> str:
             wb.close()
             return text_parts
 
-        loop = asyncio.get_event_loop()
-        text_parts = await loop.run_in_executor(None, _read_xlsx)
+        text_parts = await asyncio.to_thread(_read_xlsx)
 
         if not text_parts:
             return "XLSX fayldan ma'lumot ajratib olib bo'lmadi."
@@ -202,8 +199,7 @@ async def analyze_code_file(file_path: str) -> str:
                     content = f.read()
             return content
 
-        loop = asyncio.get_event_loop()
-        content = await loop.run_in_executor(None, _read_code)
+        content = await asyncio.to_thread(_read_code)
 
         if not content.strip():
             return "Fayl bo'sh."
@@ -269,8 +265,7 @@ async def analyze_zip(file_path: str) -> str:
 
             return text_parts
 
-        loop = asyncio.get_event_loop()
-        text_parts = await loop.run_in_executor(None, _read_zip)
+        text_parts = await asyncio.to_thread(_read_zip)
 
         full_text = "\n".join(text_parts)
         return _truncate_text(full_text)
@@ -313,7 +308,7 @@ async def analyze_file(file_path: str, file_name: str) -> str:
                 content = f.read()
             if content.strip():
                 return _truncate_text(f"--- Fayl: {file_name} ---\n{content}")
-        except (UnicodeDecodeError, Exception):
+        except (UnicodeDecodeError, OSError):
             pass
 
         return (

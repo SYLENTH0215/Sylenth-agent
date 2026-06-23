@@ -32,4 +32,32 @@ jobs:
           pip install -r requirements.txt
 
       - name: Botni ishga tushirish
-        run: timeout --preserve-status 20000s python main.py
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ADMIN_ID: ${{ secrets.ADMIN_ID }}
+        run: |
+          # Fail fast with a clear message if the required GitHub Secrets are
+          # not configured (Settings -> Secrets and variables -> Actions).
+          missing=""
+          [ -z "$BOT_TOKEN" ] && missing="$missing BOT_TOKEN"
+          [ -z "$GEMINI_API_KEY" ] && missing="$missing GEMINI_API_KEY"
+          [ -z "$ADMIN_ID" ] && missing="$missing ADMIN_ID"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required GitHub Secret(s):$missing"
+            echo "Add them under repo Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
+          # Run the bot until the scheduled timeout. A clean timeout (exit 124)
+          # is the EXPECTED outcome for a 24/7 cron job, so report it as
+          # success; any other non-zero exit (e.g. an invalid token causing an
+          # immediate crash) is surfaced as a real failure.
+          set +e
+          timeout 20000s python main.py
+          code=$?
+          if [ "$code" -eq 124 ]; then
+            echo "Bot ran until the scheduled timeout - this is expected for the 24/7 cron."
+            exit 0
+          fi
+          exit $code

@@ -1,7 +1,7 @@
 """
 Private message handler.
 Handles all messages in private (direct) chat with the bot.
-- Video URL auto-detection and download
+- Video URL auto-detection and download with multi-stage status updates
 - AI-driven text responses with function calling
 - Music search results shown as inline buttons
 - Callback query handler for music selection
@@ -44,32 +44,68 @@ def _ensure_downloads_dir() -> None:
 
 
 async def _handle_video_url(message: types.Message, url: str) -> None:
-    """Handle a video URL - download and send."""
+    """
+    Handle a video URL - download and send with multi-stage status updates.
+    Stages: Yuklanmoqda -> Botga yuklanmoqda -> Yuborildi
+    """
+    # Initial status message
     status_msg = await message.answer("📹 Video yuklanmoqda... ⏳")
+
+    # Create a status callback that edits the status message
+    async def update_status(text: str) -> None:
+        try:
+            await status_msg.edit_text(text)
+        except Exception:
+            pass
 
     try:
         await message.answer_chat_action(action="upload_video")
-        file_path, title = await download_video(url)
+
+        # Download with status callback for multi-stage updates
+        file_path, title = await download_video(url, status_callback=update_status)
 
         if file_path is None:
+            # title contains the error message
             await status_msg.edit_text(f"❌ {title}")
             return
 
         try:
+            # Stage: Sending to user
+            try:
+                await status_msg.edit_text("📤 Botga yuklanmoqda... ⏳")
+            except Exception:
+                pass
+
+            await message.answer_chat_action(action="upload_video")
             video_file = types.FSInputFile(file_path, filename=f"{title}.mp4")
             await message.answer_video(
                 video=video_file,
                 caption=f"📹 {title}",
             )
-            await status_msg.delete()
+
+            # Stage: Done - delete status message
+            try:
+                await status_msg.edit_text("✅ Video yuborildi!")
+            except Exception:
+                pass
+            # Clean delete after success
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
+
         finally:
+            # Always cleanup the downloaded file
             cleanup_file(file_path)
 
     except Exception as e:
         logger.error(f"Video handler error: {e}")
-        await status_msg.edit_text(
-            "❌ Video yuklashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
-        )
+        try:
+            await status_msg.edit_text(
+                "❌ Video yuklashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
+            )
+        except Exception:
+            pass
 
 
 @router.message(F.document)
@@ -127,6 +163,12 @@ async def handle_document(message: types.Message, bot: Bot) -> None:
             ai_prompt += f"Foydalanuvchi izohi: {user_caption}\n\n"
         ai_prompt += f"Fayl mazmuni:\n{extracted_text}\n\nUshbu faylni tahlil qil va foydalanuvchiga yordam ber."
 
+        # Update status
+        try:
+            await status_msg.edit_text("🤖 AI tahlil qilmoqda... ⏳")
+        except Exception:
+            pass
+
         # Get AI response about the file
         response = await get_ai_response(
             user_id=user.id,
@@ -144,9 +186,12 @@ async def handle_document(message: types.Message, bot: Bot) -> None:
 
     except Exception as e:
         logger.error(f"Document handler error: {e}")
-        await status_msg.edit_text(
-            "❌ Faylni tahlil qilishda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
-        )
+        try:
+            await status_msg.edit_text(
+                "❌ Faylni tahlil qilishda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
+            )
+        except Exception:
+            pass
 
 
 @router.message(F.text)
@@ -229,6 +274,7 @@ async def handle_music_callback(callback: types.CallbackQuery) -> None:
     """
     Handle music selection callback - user tapped a music result button.
     Downloads the selected track and sends it as audio.
+    Multi-stage status: Yuklanmoqda -> Botga yuklanmoqda -> Yuborildi
     """
     user = callback.from_user
     if not user or not callback.data:
@@ -253,9 +299,20 @@ async def handle_music_callback(callback: types.CallbackQuery) -> None:
 
     status_msg = await message.answer("🎵 Musiqa yuklanmoqda... ⏳")
 
+    # Create status callback for multi-stage updates
+    async def update_status(text: str) -> None:
+        try:
+            await status_msg.edit_text(text)
+        except Exception:
+            pass
+
     try:
         await message.answer_chat_action(action="upload_voice")
-        file_path, metadata = await download_music_by_url(url)
+
+        # Download with status callback
+        file_path, metadata = await download_music_by_url(
+            url, status_callback=update_status
+        )
 
         if file_path is None:
             error_text = metadata.get("error", "Musiqa yuklab olinmadi.")
@@ -267,6 +324,12 @@ async def handle_music_callback(callback: types.CallbackQuery) -> None:
         duration = metadata.get("duration", 0)
 
         try:
+            # Stage: Sending to Telegram
+            try:
+                await status_msg.edit_text("📤 Botga yuklanmoqda... ⏳")
+            except Exception:
+                pass
+
             audio_file = types.FSInputFile(file_path, filename=f"{title}.mp3")
             await message.answer_audio(
                 audio=audio_file,
@@ -275,12 +338,22 @@ async def handle_music_callback(callback: types.CallbackQuery) -> None:
                 duration=int(duration) if duration else None,
                 caption=f"🎵 {title}",
             )
-            await status_msg.delete()
+
+            # Stage: Done
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
+
         finally:
+            # Always cleanup the downloaded file
             cleanup_file(file_path)
 
     except Exception as e:
         logger.error(f"Music callback handler error: {e}")
-        await status_msg.edit_text(
-            "❌ Musiqa yuklashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
-        )
+        try:
+            await status_msg.edit_text(
+                "❌ Musiqa yuklashda xatolik yuz berdi. Iltimos, qayta urinib ko'ring."
+            )
+        except Exception:
+            pass
